@@ -3,10 +3,18 @@ updates:
   - package-ecosystem: npm
     directory: "/"
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 1
+    groups:
+      javascript-dependencies:
+        patterns:
+          - "*"
   - package-ecosystem: cargo
     directory: "/src-tauri"
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 1
+    groups:
+      rust-dependencies:
+        patterns:
+          - "*"
