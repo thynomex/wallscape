@@ -48,7 +48,7 @@ windows = { version = "0.58", features = [
 libmpv2 = { version = "6.0", features = ["render"] }
 
 # Database for wallpaper metadata
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 tokio = { version = "1", features = ["full"] }
 
