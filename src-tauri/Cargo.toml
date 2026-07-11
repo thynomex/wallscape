@@ -27,10 +27,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
-scraper = "0.20"
+scraper = "0.27"
 
 # Windows API bindings
-windows = { version = "0.58", features = [
+windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
@@ -48,7 +48,7 @@ windows = { version = "0.58", features = [
 libmpv2 = { version = "6.0", features = ["render"] }
 
 # Database for wallpaper metadata
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 tokio = { version = "1", features = ["full"] }
 
