@@ -1,0 +1,76 @@
+:root {
+  /* ── Colors ───────────────────────────────── */
+  --bg-primary: #2a3540;
+  --bg-secondary: #1a2028;
+  --bg-tertiary: #343d48;
+
+  /* Deep base behind the floating glass shell (ambient desktop). */
+  --bg-base: #090c11;
+
+  /* ── Glassmorphism surfaces ───────────────── */
+  /* Translucent near-black panels that let the ambient backdrop tint through. */
+  --glass-panel: rgba(23, 29, 34, 0.38);
+  --glass-panel-strong: rgba(18, 24, 29, 0.48);
+  --glass-pill: rgba(29, 36, 43, 0.46);
+  --glass-control: rgba(35, 43, 50, 0.48);
+  /* Hairline borders: dark line + top highlight give the frosted bevel. */
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-highlight: rgba(255, 255, 255, 0.2);
+  --glass-blur: blur(34px) saturate(165%);
+  --text-primary: #ffffff;
+  --text-secondary: #a0aec0;
+  --text-tertiary: #6b7280;
+
+  --accent-blue: #3b82f6;
+  --accent-blue-hover: #2563eb;
+  --accent-cyan: #7dd3fc;
+
+  --glass-light: rgba(255, 255, 255, 0.1);
+  --glass-medium: rgba(255, 255, 255, 0.15);
+  --glass-dark: rgba(0, 0, 0, 0.5);
+
+  --badge-new: #3b82f6;
+  --border-active: #ffffff;
+  --border-subtle: rgba(255, 255, 255, 0.1);
+
+  /* ── Spacing (4px base) ───────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+
+  /* ── Border radius ────────────────────────── */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+
+  /* ── Typography ───────────────────────────── */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
+    "Helvetica Neue", Arial, sans-serif;
+
+  /* ── Elevation ────────────────────────────── */
+  --shadow-card: 0 16px 34px rgba(0, 0, 0, 0.32);
+  --shadow-card-hover: 0 26px 62px rgba(2, 8, 14, 0.46);
+
+  /* ── Motion ───────────────────────────────── */
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --motion-fast: 160ms;
+  --motion-med: 280ms;
+  --motion-slow: 620ms;
+
+  /* ── Layout ───────────────────────────────── */
+  --shell-inset: clamp(38px, 3.2vw, 56px);
+  --shell-radius: clamp(26px, 3vw, 38px);
+  --nav-height: 132px;
+}

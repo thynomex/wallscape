@@ -1,0 +1,40 @@
+# Dependencies and frontend output
+node_modules/
+build/
+.svelte-kit/
+package/
+
+# Rust and Tauri output
+target/
+src-tauri/target/
+src-tauri/bundle/
+src-tauri/gen/
+
+# Local third-party development files
+.vendor/
+
+# Environment and local tooling
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.user
+*.suo
+*.pdb
+*.exe
+
+# Editor caches
+.vscode/
+.idea/
+.vs/
+*.code-workspace
+
+# Generated visual-test artifacts
+shots/
+
+# Vite temporary configuration files
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*

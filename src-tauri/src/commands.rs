@@ -1,0 +1,20 @@
+pub(crate) mod diagnostic;
+pub(crate) mod monitors;
+pub(crate) mod motionbgs;
+pub(crate) mod organization;
+pub(crate) mod runtime;
+pub(crate) mod settings;
+pub(crate) mod shell;
+pub(crate) mod storage;
+pub(crate) mod wallhaven;
+pub(crate) mod wallpaper_health;
+pub(crate) mod wallpaper_history;
+pub(crate) mod wallpaper_import;
+pub(crate) mod wallpaper_import_scan;
+pub(crate) mod wallpaper_library;
+pub(crate) mod wallpaper_restore;
+pub(crate) mod wallpaper_rotation;
+pub(crate) mod wallpapers;
+
+pub(crate) use settings::sync_autostart;
+pub(crate) use wallpapers::restore_original_wallpaper_blocking;

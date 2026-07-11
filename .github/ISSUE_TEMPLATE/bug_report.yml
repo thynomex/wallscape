@@ -1,0 +1,52 @@
+name: Bug report
+description: Report a reproducible problem in Wallscape.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Review logs and remove private file paths or wallpaper names before posting.
+  - type: input
+    id: version
+    attributes:
+      label: Wallscape version
+      placeholder: 0.1.4
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 24H2
+    validations:
+      required: true
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Display and graphics setup
+      description: Include GPU, monitor resolutions, scaling, and primary display.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs
+      render: text
