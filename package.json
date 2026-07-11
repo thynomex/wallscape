@@ -1,6 +1,6 @@
 {
   "name": "wallscape-win",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Native Windows wallpaper manager for images and videos.",
   "type": "module",
   "scripts": {

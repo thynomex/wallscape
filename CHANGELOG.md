@@ -4,7 +4,12 @@ Notable changes to Wallscape are documented here. The project follows [Semantic 
 
 ## [Unreleased]
 
-- Prepared Wallscape for its first public open-source release.
+## [0.1.5] - 2026-07-11
+
+- Updated the maintained Tauri, Svelte, SvelteKit, Vite, and validation toolchain.
+- Updated `anyhow` and `tauri-build` to their latest compatible patch releases.
+- Enabled GitHub dependency vulnerability alerts.
+- Kept major TypeScript, Node type, scraper, windows-rs, and rusqlite migrations out of this release pending dedicated compatibility reviews.
 
 ## [0.1.4] - 2026-07-11
 
