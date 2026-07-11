@@ -4,6 +4,10 @@ Notable changes to Wallscape are documented here. The project follows [Semantic 
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-07-11
+
+- Added a Recently Used tray submenu for quickly restoring recent wallpapers to their recorded display.
+
 ## [0.1.5] - 2026-07-11
 
 - Updated the maintained Tauri, Svelte, SvelteKit, Vite, and validation toolchain.

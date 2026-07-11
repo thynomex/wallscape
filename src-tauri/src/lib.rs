@@ -22,7 +22,7 @@ use db::Database;
 use parking_lot::Mutex;
 use settings::{Settings, SettingsState};
 use std::sync::OnceLock;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
@@ -33,6 +33,8 @@ use wallpaper::WallpaperRuntime;
 
 /// Label of the single application window (see `tauri.conf.json`).
 const MAIN_WINDOW_LABEL: &str = "main";
+const TRAY_HISTORY_ID_PREFIX: &str = "history:";
+const TRAY_HISTORY_LIMIT: i64 = 5;
 static LOG_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 
 pub struct AppDatabase(pub Mutex<Database>);
@@ -201,6 +203,17 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
         None::<&str>,
     )?;
     let quit_item = MenuItem::with_id(app, "quit", "Quit Wallscape", true, None::<&str>)?;
+    let recent_history_items = recent_history_items(app)?;
+    let recent_history_item_refs = recent_history_items
+        .iter()
+        .map(|item| item as &dyn IsMenuItem<_>)
+        .collect::<Vec<_>>();
+    let recent_history_menu = Submenu::with_items(
+        app,
+        "Recently Used",
+        !recent_history_items.is_empty(),
+        &recent_history_item_refs,
+    )?;
 
     let menu = Menu::with_items(
         app,
@@ -208,6 +221,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
             &show_item,
             &pause_item,
             &next_favorite_item,
+            &recent_history_menu,
             &restore_item,
             &PredefinedMenuItem::separator(app)?,
             &quit_item,
@@ -269,6 +283,44 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
                 let _ = pause_item_handle.set_text("Pause wallpaper");
             }
             "quit" => app.exit(0),
+            id if id.starts_with(TRAY_HISTORY_ID_PREFIX) => {
+                let Some(history_id) = tray_history_id_from_menu_id(id) else {
+                    return;
+                };
+                let app_handle = app.clone();
+                let runtime = app.state::<WallpaperRuntime>().inner().clone();
+                tauri::async_runtime::spawn(async move {
+                    let Some(db) = app_handle.try_state::<AppDatabase>() else {
+                        tracing::warn!("Tray history apply skipped: database is unavailable");
+                        return;
+                    };
+
+                    let entry = match db.0.lock().list_wallpaper_history(50) {
+                        Ok(entries) => entries.into_iter().find(|entry| entry.id == history_id),
+                        Err(error) => {
+                            tracing::warn!("Tray history lookup failed: {}", error);
+                            return;
+                        }
+                    };
+
+                    let Some(entry) = entry else {
+                        tracing::warn!("Tray history entry {} is no longer available", history_id);
+                        return;
+                    };
+
+                    if let Err(error) = wallpaper_lifecycle::apply_wallpaper_path_with_source(
+                        db.inner(),
+                        &runtime,
+                        entry.file_path,
+                        entry.target_monitor_id,
+                        "tray_history",
+                    )
+                    .await
+                    {
+                        tracing::warn!("Tray history apply failed: {}", error);
+                    }
+                });
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
@@ -289,6 +341,41 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
 
     builder.build(app)?;
     Ok(())
+}
+
+fn recent_history_items(app: &tauri::App) -> tauri::Result<Vec<MenuItem<tauri::Wry>>> {
+    let entries = app
+        .try_state::<AppDatabase>()
+        .and_then(|db| db.0.lock().list_wallpaper_history(TRAY_HISTORY_LIMIT).ok())
+        .unwrap_or_default();
+
+    entries
+        .into_iter()
+        .map(|entry| {
+            MenuItem::with_id(
+                app,
+                tray_history_menu_id(entry.id),
+                tray_history_menu_label(&entry.title, entry.target_monitor_id.as_deref()),
+                true,
+                None::<&str>,
+            )
+        })
+        .collect()
+}
+
+fn tray_history_menu_id(history_id: i64) -> String {
+    format!("{TRAY_HISTORY_ID_PREFIX}{history_id}")
+}
+
+fn tray_history_id_from_menu_id(id: &str) -> Option<i64> {
+    id.strip_prefix(TRAY_HISTORY_ID_PREFIX)?.parse().ok()
+}
+
+fn tray_history_menu_label(title: &str, target_monitor_id: Option<&str>) -> String {
+    match target_monitor_id {
+        Some(_) => format!("{title} (Display)"),
+        None => title.to_string(),
+    }
 }
 
 /// Reveal and focus the main window.
@@ -343,4 +430,25 @@ fn restore_last_wallpaper(app: &tauri::AppHandle) {
             tracing::warn!("Failed to restore last wallpaper on launch: {}", error);
         }
     });
+}
+
+#[cfg(test)]
+mod tray_history_tests {
+    use super::{tray_history_id_from_menu_id, tray_history_menu_id, tray_history_menu_label};
+
+    #[test]
+    fn tray_history_menu_id_round_trips() {
+        let id = tray_history_menu_id(42);
+        assert_eq!(tray_history_id_from_menu_id(&id), Some(42));
+        assert_eq!(tray_history_id_from_menu_id("history:invalid"), None);
+    }
+
+    #[test]
+    fn tray_history_label_marks_monitor_specific_entries() {
+        assert_eq!(tray_history_menu_label("Forest", None), "Forest");
+        assert_eq!(
+            tray_history_menu_label("Forest", Some("monitor-1")),
+            "Forest (Display)"
+        );
+    }
 }
