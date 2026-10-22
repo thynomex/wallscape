@@ -2,21 +2,22 @@
 param(
     [string]$Source = $env:WALLSCAPE_LIBMPV_SOURCE,
     [string]$InstallDir,
+    [switch]$SkipBundleStaging,
     [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
 
-$PackageName = "mpv-dev-slim-x86_64-20260622-git-1bcc17a.zip"
-$ExpectedSha256 = "EC952CBA1DE9297B75B661993455D485BE84811DB7D5EDC0E7041EBDAB9E55EC"
-$GitHubRepo = "thynomex/wallscape"
-$GitHubReleaseTag = "libmpv-slim-20260622"
+$PackageName = "mpv-dev-x86_64-20261005-git-c152964208.7z"
+$ExpectedSha256 = "7D9DD506DA6B77E6054F56052F7423D9F7EED764F85154A6221925ABA37DBFB2"
+$GitHubRepo = "shinchiro/mpv-winbuild-cmake"
+$GitHubReleaseTag = "20261005"
 $DefaultSource = "https://github.com/$GitHubRepo/releases/download/$GitHubReleaseTag/$PackageName"
 
 $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $VendorDir = Join-Path $ProjectRoot ".vendor"
 $CacheDir = Join-Path $VendorDir "cache"
-$DefaultInstallDir = Join-Path $VendorDir "mpv-dev"
+$DefaultInstallDir = Join-Path $VendorDir "mpv-dev-filters"
 $BundleDir = Join-Path $ProjectRoot "src-tauri\bundle"
 $BundleDll = Join-Path $BundleDir "libmpv-2.dll"
 
@@ -138,7 +139,6 @@ function Find-PackageRoot {
         $Path = $Candidate.FullName
         if (
             (Test-Path -LiteralPath (Join-Path $Path "libmpv-2.dll")) -and
-            (Test-Path -LiteralPath (Join-Path $Path "mpv.lib")) -and
             (Test-Path -LiteralPath (Join-Path $Path "libmpv.dll.a")) -and
             (Test-Path -LiteralPath (Join-Path $Path "include\mpv\client.h"))
         ) {
@@ -149,6 +149,32 @@ function Find-PackageRoot {
     throw "Could not find libmpv dev files in extracted archive."
 }
 
+function Expand-LibmpvArchive {
+    param([string]$ArchivePath, [string]$Destination)
+
+    $SevenZip = Get-Command 7z, 7za -ErrorAction SilentlyContinue | Select-Object -First 1
+    $SevenZipPath = if ($SevenZip) { $SevenZip.Source } else { $null }
+    if (-not $SevenZipPath) {
+        foreach ($ProgramDirectory in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+            if ($ProgramDirectory) {
+                $Candidate = Join-Path $ProgramDirectory "7-Zip\7z.exe"
+                if (Test-Path -LiteralPath $Candidate) {
+                    $SevenZipPath = $Candidate
+                    break
+                }
+            }
+        }
+    }
+    if (-not $SevenZipPath) {
+        throw "Extracting the pinned libmpv package requires 7-Zip or NanaZip (7z/7za on PATH). Install one, then run npm run setup:mpv again."
+    }
+
+    & $SevenZipPath x $ArchivePath "-o$Destination" -y | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not extract libmpv archive: $ArchivePath"
+    }
+}
+
 function Install-LibmpvPackage {
     param(
         [string]$PackageRoot,
@@ -157,7 +183,13 @@ function Install-LibmpvPackage {
 
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
     Copy-Item -LiteralPath (Join-Path $PackageRoot "libmpv-2.dll") -Destination (Join-Path $Destination "libmpv-2.dll") -Force
-    Copy-Item -LiteralPath (Join-Path $PackageRoot "mpv.lib") -Destination (Join-Path $Destination "mpv.lib") -Force
+    # The upstream package ships COFF import objects in a GNU archive. MSVC
+    # accepts that archive; give it the library name requested by libmpv2-sys.
+    $MsvcImportLibrary = Join-Path $PackageRoot "mpv.lib"
+    if (-not (Test-Path -LiteralPath $MsvcImportLibrary)) {
+        $MsvcImportLibrary = Join-Path $PackageRoot "libmpv.dll.a"
+    }
+    Copy-Item -LiteralPath $MsvcImportLibrary -Destination (Join-Path $Destination "mpv.lib") -Force
     Copy-Item -LiteralPath (Join-Path $PackageRoot "libmpv.dll.a") -Destination (Join-Path $Destination "libmpv.dll.a") -Force
     Copy-Item -LiteralPath (Join-Path $PackageRoot "include") -Destination $Destination -Recurse -Force
 }
@@ -176,6 +208,11 @@ Copy-ArchiveToCache -ArchiveSource $Source -ArchivePath $ArchivePath
 Assert-ArchiveHash -ArchivePath $ArchivePath
 
 $ExtractDir = Join-Path $CacheDir "extract-$PID"
+$ResolvedCacheDir = [System.IO.Path]::GetFullPath($CacheDir).TrimEnd('\') + '\'
+$ResolvedExtractDir = [System.IO.Path]::GetFullPath($ExtractDir)
+if (-not $ResolvedExtractDir.StartsWith($ResolvedCacheDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to clean extraction directory outside the libmpv cache: $ResolvedExtractDir"
+}
 if (Test-Path -LiteralPath $ExtractDir) {
     Remove-Item -LiteralPath $ExtractDir -Recurse -Force
 }
@@ -183,15 +220,17 @@ if (Test-Path -LiteralPath $ExtractDir) {
 New-Item -ItemType Directory -Force -Path $ExtractDir | Out-Null
 
 try {
-    Expand-Archive -LiteralPath $ArchivePath -DestinationPath $ExtractDir -Force
+    Expand-LibmpvArchive -ArchivePath $ArchivePath -Destination $ExtractDir
     $PackageRoot = Find-PackageRoot -ExtractDir $ExtractDir
     Install-LibmpvPackage -PackageRoot $PackageRoot -Destination $InstallDir
 
-    New-Item -ItemType Directory -Force -Path $BundleDir | Out-Null
-    Copy-Item -LiteralPath (Join-Path $InstallDir "libmpv-2.dll") -Destination $BundleDll -Force
+    if (-not $SkipBundleStaging) {
+        New-Item -ItemType Directory -Force -Path $BundleDir | Out-Null
+        Copy-Item -LiteralPath (Join-Path $InstallDir "libmpv-2.dll") -Destination $BundleDll -Force
+        Write-Host "Staged bundled DLL at $BundleDll"
+    }
 
-    Write-Host "Installed slim libmpv to $InstallDir"
-    Write-Host "Staged bundled DLL at $BundleDll"
+    Write-Host "Installed libmpv with frame filters to $InstallDir"
     Write-Host "Archive SHA-256 verified: $ExpectedSha256"
 } finally {
     if (Test-Path -LiteralPath $ExtractDir) {

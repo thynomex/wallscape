@@ -24,11 +24,16 @@
     if (!inTauri) return;
     const w = await appWindow();
     // Respect the "minimize to tray" preference: hide instead of minimizing.
-    appVisibility.markHidden();
-    if (settingsStore.settings.minimizeToTray) {
-      await w.hide();
-    } else {
-      await w.minimize();
+    const restoreVisibility = appVisibility.markHidden();
+    try {
+      if (settingsStore.settings.minimizeToTray) {
+        await w.hide();
+      } else {
+        await w.minimize();
+      }
+    } catch (error) {
+      restoreVisibility();
+      throw error;
     }
   }
 
@@ -40,10 +45,16 @@
 
   async function close() {
     if (!inTauri) return;
-    if (settingsStore.settings.closeToTray) {
-      appVisibility.markHidden();
+    const w = await appWindow();
+    const restoreVisibility = settingsStore.settings.closeToTray
+      ? appVisibility.markHidden()
+      : undefined;
+    try {
+      await w.close();
+    } catch (error) {
+      restoreVisibility?.();
+      throw error;
     }
-    (await appWindow()).close();
   }
 </script>
 

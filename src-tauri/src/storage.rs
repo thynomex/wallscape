@@ -55,10 +55,12 @@ pub(crate) fn clear_wallhaven_cache(
     db: &AppDatabase,
 ) -> Result<StorageCleanupResult, String> {
     let app_data_dir = app_data_dir(app_handle)?;
-    let wallpapers =
-        db.0.lock()
-            .list_wallpapers()
-            .map_err(|e| format!("Failed to list wallpapers: {}", e))?;
+    // Publication and registration of downloads hold this same lock. Keep it
+    // until cleanup finishes so a newly published file cannot look orphaned.
+    let db_guard = db.0.lock();
+    let wallpapers = db_guard
+        .list_wallpapers()
+        .map_err(|e| format!("Failed to list wallpapers: {}", e))?;
     Ok(remove_unused_wallhaven_cache_for_paths(
         &app_data_dir,
         &wallpapers,
@@ -88,18 +90,24 @@ pub(crate) fn cleanup_missing_library_entries(
         db.0.lock()
             .list_wallpapers()
             .map_err(|e| format!("Failed to list wallpapers: {}", e))?;
-    let missing = wallpapers
-        .iter()
-        .filter(|wallpaper| is_missing_library_entry(wallpaper))
-        .cloned()
-        .collect::<Vec<_>>();
+    let mut missing = Vec::new();
+    let mut warnings = Vec::new();
+    for wallpaper in wallpapers {
+        match library_entry_health(&wallpaper) {
+            LibraryEntryHealth::Missing => missing.push(wallpaper),
+            LibraryEntryHealth::Available => {}
+            LibraryEntryHealth::Inaccessible(reason) => {
+                warnings.push(format!("Kept '{}': {}", wallpaper.file_path, reason))
+            }
+        }
+    }
 
     let removed_entries = delete_wallpapers(db, &missing)?;
     Ok(StorageCleanupResult {
         removed_files: 0,
         removed_bytes: 0,
         removed_entries,
-        warnings: Vec::new(),
+        warnings,
     })
 }
 
@@ -108,6 +116,63 @@ fn app_data_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
         .path()
         .app_data_dir()
         .map_err(|e| format!("Failed to resolve app data directory: {}", e))
+}
+
+/// Call during setup, before the app can start any downloads. Live downloads
+/// continue to own their staging files through their RAII guards.
+pub(crate) fn cleanup_abandoned_downloads(
+    app_handle: &tauri::AppHandle,
+) -> Result<StorageCleanupResult, String> {
+    Ok(cleanup_abandoned_downloads_for_paths(&app_data_dir(
+        app_handle,
+    )?))
+}
+
+fn cleanup_abandoned_downloads_for_paths(app_data_dir: &Path) -> StorageCleanupResult {
+    let mut files = Vec::new();
+    let mut warnings = Vec::new();
+    for source in ["wallhaven", "motionbgs"] {
+        let directory = app_data_dir.join(source);
+        let entries = match std::fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                warnings.push(format!(
+                    "Failed to read '{}': {}",
+                    directory.display(),
+                    error
+                ));
+                continue;
+            }
+        };
+        for entry in entries {
+            let result = entry.and_then(|entry| {
+                let path = entry.path();
+                let is_staging_file = path.extension().is_some_and(|ext| ext == "part")
+                    && entry.file_name().to_string_lossy().starts_with("download-");
+                if is_staging_file {
+                    let metadata = entry.metadata()?;
+                    if metadata.is_file() {
+                        files.push(CacheFile {
+                            path,
+                            bytes: metadata.len() as i64,
+                        });
+                    }
+                }
+                Ok(())
+            });
+            if let Err(error) = result {
+                warnings.push(format!(
+                    "Failed to inspect '{}': {}",
+                    directory.display(),
+                    error
+                ));
+            }
+        }
+    }
+    let mut result = remove_files(files);
+    result.warnings.extend(warnings);
+    result
 }
 
 fn storage_stats_for_paths(app_data_dir: &Path, wallpapers: &[Wallpaper]) -> StorageStats {
@@ -180,6 +245,14 @@ fn collect_cache_files_inner(path: &Path, files: &mut Vec<CacheFile>) {
     };
 
     if metadata.is_file() {
+        // Setup reaps abandoned staging files before downloads can start. The
+        // remaining staging files belong to live RAII guards, including cancellation.
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "part")
+        {
+            return;
+        }
         files.push(CacheFile {
             path: path.to_path_buf(),
             bytes: metadata.len() as i64,
@@ -303,12 +376,33 @@ fn delete_wallpapers(db: &AppDatabase, wallpapers: &[Wallpaper]) -> Result<i64, 
 }
 
 fn is_missing_library_entry(wallpaper: &Wallpaper) -> bool {
+    matches!(library_entry_health(wallpaper), LibraryEntryHealth::Missing)
+}
+
+enum LibraryEntryHealth {
+    Available,
+    Missing,
+    Inaccessible(String),
+}
+
+fn library_entry_health(wallpaper: &Wallpaper) -> LibraryEntryHealth {
     let path = Path::new(&wallpaper.file_path);
-    if !path.exists() || !path.is_file() {
-        return true;
+    match std::fs::metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return LibraryEntryHealth::Missing;
+        }
+        Err(error) => return LibraryEntryHealth::Inaccessible(error.to_string()),
+        Ok(metadata) if !metadata.is_file() => {
+            return LibraryEntryHealth::Inaccessible("Path is not a regular file".to_string());
+        }
+        Ok(_) => {}
     }
 
-    std::fs::File::open(path).is_err()
+    match std::fs::File::open(path) {
+        Ok(_) => LibraryEntryHealth::Available,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => LibraryEntryHealth::Missing,
+        Err(error) => LibraryEntryHealth::Inaccessible(error.to_string()),
+    }
 }
 
 fn sum_bytes(files: &[CacheFile]) -> i64 {
@@ -517,5 +611,78 @@ mod tests {
         assert_eq!(remaining[0].title, "Local");
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn cleanup_preserves_files_with_windows_sharing_violations() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("locked.mp4");
+        fs::write(&path, b"video").unwrap();
+        let db = test_db(root.path());
+        let id =
+            db.0.lock()
+                .add_wallpaper(
+                    &sample_metadata("Locked", None, None),
+                    path.to_str().unwrap(),
+                )
+                .unwrap();
+        db.0.lock().set_wallpaper_favorite(id, true).unwrap();
+        let collection = db.0.lock().create_collection("Keep").unwrap();
+        db.0.lock()
+            .set_collection_membership(collection.id, id, true)
+            .unwrap();
+        let _exclusive = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+
+        let result = cleanup_missing_library_entries(&db).unwrap();
+
+        assert_eq!(result.removed_entries, 0);
+        assert_eq!(result.warnings.len(), 1);
+        assert!(db.0.lock().get_wallpaper(id).unwrap().unwrap().is_favorite);
+        assert_eq!(db.0.lock().list_collection_memberships().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn startup_reclaims_abandoned_downloads_from_both_sources() {
+        let root = tempfile::tempdir().unwrap();
+        for source in ["wallhaven", "motionbgs"] {
+            let cache = root.path().join(source);
+            fs::create_dir_all(&cache).unwrap();
+            fs::write(cache.join("download-interrupted.part"), b"partial").unwrap();
+            fs::write(cache.join("saved-download-finished.jpg"), b"saved").unwrap();
+            fs::write(cache.join("unrelated.part"), b"keep").unwrap();
+        }
+        let result = cleanup_abandoned_downloads_for_paths(root.path());
+        assert_eq!(result.removed_files, 2);
+        assert_eq!(result.removed_bytes, 14);
+        assert!(result.warnings.is_empty());
+        for source in ["wallhaven", "motionbgs"] {
+            let cache = root.path().join(source);
+            assert!(!cache.join("download-interrupted.part").exists());
+            assert!(cache.join("saved-download-finished.jpg").exists());
+            assert!(cache.join("unrelated.part").exists());
+        }
+        assert_eq!(
+            cleanup_abandoned_downloads_for_paths(root.path()).removed_files,
+            0
+        );
+    }
+
+    #[test]
+    fn cache_cleanup_preserves_in_progress_downloads() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = wallhaven_cache_dir(root.path());
+        fs::create_dir_all(&cache).unwrap();
+        let pending = cache.join("download-active.part");
+        fs::write(&pending, b"partial").unwrap();
+        fs::write(cache.join("unused.jpg"), b"finished").unwrap();
+        let result = remove_unused_wallhaven_cache_for_paths(root.path(), &[]);
+        assert_eq!(result.removed_files, 1);
+        assert!(pending.exists());
     }
 }

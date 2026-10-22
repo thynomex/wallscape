@@ -1,7 +1,8 @@
-use crate::downloads::ByteDownloadProgress;
+use crate::downloads::{stream_download, ByteDownloadProgress, StagedDownload};
 use reqwest::header::CONTENT_TYPE;
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
+use std::io::{Read, Seek, SeekFrom};
 use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -18,6 +19,7 @@ const MOTIONBGS_READ_TIMEOUT: Duration = Duration::from_secs(45);
 pub const MOTIONBGS_SOURCE_NAME: &str = "motionbgs";
 
 static MOTIONBGS_NEXT_REQUEST_AT: OnceLock<Mutex<Instant>> = OnceLock::new();
+static MOTIONBGS_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -74,7 +76,7 @@ pub struct MotionBgsMeta {
 
 #[derive(Debug)]
 pub struct DownloadedMotionBgsVideo {
-    pub bytes: Vec<u8>,
+    pub file: StagedDownload,
     pub extension: &'static str,
     pub wallpaper: MotionBgsWallpaper,
     pub download: MotionBgsDownloadOption,
@@ -86,12 +88,17 @@ pub struct MotionBgsClient {
 
 impl MotionBgsClient {
     pub fn new() -> Result<Self, String> {
+        if let Some(http) = MOTIONBGS_HTTP_CLIENT.get() {
+            return Ok(Self { http: http.clone() });
+        }
+
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .connect_timeout(MOTIONBGS_CONNECT_TIMEOUT)
             .read_timeout(MOTIONBGS_READ_TIMEOUT)
             .build()
             .map_err(|e| format!("Failed to create MotionBGS client: {}", e))?;
+        let http = MOTIONBGS_HTTP_CLIENT.get_or_init(|| http).clone();
 
         Ok(Self { http })
     }
@@ -176,7 +183,8 @@ impl MotionBgsClient {
     pub async fn download_video_with_progress<F>(
         &self,
         wallpaper: &MotionBgsWallpaper,
-        mut on_progress: F,
+        cache_dir: &std::path::Path,
+        on_progress: F,
     ) -> Result<DownloadedMotionBgsVideo, String>
     where
         F: FnMut(ByteDownloadProgress),
@@ -188,7 +196,7 @@ impl MotionBgsClient {
 
         wait_for_motionbgs_request_slot().await;
 
-        let mut response = self
+        let response = self
             .http
             .get(url)
             .send()
@@ -220,48 +228,17 @@ impl MotionBgsClient {
             return Err("MotionBGS returned an unsupported video format".to_string());
         }
 
-        let mut received_bytes = 0_u64;
-        let mut bytes =
-            Vec::with_capacity(total_bytes.unwrap_or(0).min(MAX_DOWNLOAD_BYTES) as usize);
-        on_progress(ByteDownloadProgress {
-            received_bytes,
-            total_bytes,
-        });
-
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|e| format!("Failed to read MotionBGS video: {}", e))?
-        {
-            received_bytes += chunk.len() as u64;
-
-            if received_bytes > MAX_DOWNLOAD_BYTES {
-                return Err("MotionBGS video is too large to download".to_string());
-            }
-
-            bytes.extend_from_slice(&chunk);
-            on_progress(ByteDownloadProgress {
-                received_bytes,
-                total_bytes,
-            });
-        }
-
-        if bytes.len() as u64 > MAX_DOWNLOAD_BYTES {
-            return Err("MotionBGS video is too large to download".to_string());
-        }
-
-        if let Some(total_bytes) = total_bytes {
-            if bytes.len() as u64 != total_bytes {
-                return Err(format!(
-                    "MotionBGS video download ended early: received {} of {} bytes",
-                    bytes.len(),
-                    total_bytes
-                ));
-            }
-        }
+        let file = stream_download(
+            response,
+            cache_dir,
+            MAX_DOWNLOAD_BYTES,
+            "MotionBGS",
+            on_progress,
+        )
+        .await?;
 
         Ok(DownloadedMotionBgsVideo {
-            bytes,
+            file,
             extension: "mp4",
             wallpaper: detail,
             download,
@@ -783,10 +760,25 @@ pub(crate) fn motionbgs_download_source_id(wallpaper: &MotionBgsWallpaper) -> St
     format!("{}-{quality}", wallpaper.id)
 }
 
-pub(crate) fn mp4_duration_ms(bytes: &[u8]) -> Option<i64> {
-    let moov = find_mp4_child_box(bytes, 0, bytes.len(), b"moov")?;
-    let mvhd = find_mp4_child_box(bytes, moov.payload_start, moov.end, b"mvhd")?;
-    parse_mvhd_duration_ms(&bytes[mvhd.payload_start..mvhd.end])
+pub(crate) fn mp4_file_duration_ms(path: &std::path::Path) -> Option<i64> {
+    let mut file = std::fs::File::open(path).ok()?;
+    let length = file.metadata().ok()?.len();
+    mp4_reader_duration_ms(&mut file, length)
+}
+
+#[cfg(test)]
+fn mp4_duration_ms(bytes: &[u8]) -> Option<i64> {
+    mp4_reader_duration_ms(&mut std::io::Cursor::new(bytes), bytes.len() as u64)
+}
+
+fn mp4_reader_duration_ms(reader: &mut (impl Read + Seek), length: u64) -> Option<i64> {
+    let moov = find_mp4_child_box(reader, 0, length, b"moov")?;
+    let mvhd = find_mp4_child_box(reader, moov.payload_start, moov.end, b"mvhd")?;
+    let mut payload = [0_u8; 32];
+    let count = (mvhd.end - mvhd.payload_start).min(payload.len() as u64) as usize;
+    reader.seek(SeekFrom::Start(mvhd.payload_start)).ok()?;
+    reader.read_exact(&mut payload[..count]).ok()?;
+    parse_mvhd_duration_ms(&payload[..count])
 }
 
 fn parse_mvhd_duration_ms(payload: &[u8]) -> Option<i64> {
@@ -816,47 +808,52 @@ fn parse_mvhd_duration_ms(payload: &[u8]) -> Option<i64> {
 
 #[derive(Debug)]
 struct Mp4Box {
-    payload_start: usize,
-    end: usize,
+    payload_start: u64,
+    end: u64,
 }
 
-fn find_mp4_child_box(bytes: &[u8], start: usize, end: usize, name: &[u8; 4]) -> Option<Mp4Box> {
+fn find_mp4_child_box(
+    reader: &mut (impl Read + Seek),
+    start: u64,
+    end: u64,
+    name: &[u8; 4],
+) -> Option<Mp4Box> {
     let mut cursor = start;
-
     while cursor.checked_add(8)? <= end {
-        let size = read_u32(bytes, cursor)? as u64;
-        let box_type = bytes.get(cursor + 4..cursor + 8)?;
-        let mut header_size = 8_u64;
-
+        reader.seek(SeekFrom::Start(cursor)).ok()?;
+        let mut header = [0_u8; 8];
+        reader.read_exact(&mut header).ok()?;
+        let size = read_u32(&header, 0)? as u64;
+        let box_type = &header[4..8];
+        let mut header_size = 8;
         let box_size = if size == 1 {
             header_size = 16;
-            read_u64(bytes, cursor + 8)?
+            if cursor.checked_add(header_size)? > end {
+                return None;
+            }
+            let mut extended_size = [0_u8; 8];
+            reader.read_exact(&mut extended_size).ok()?;
+            u64::from_be_bytes(extended_size)
         } else if size == 0 {
-            (end - cursor) as u64
+            end - cursor
         } else {
             size
         };
-
         if box_size < header_size {
             return None;
         }
-
-        let box_end = cursor.checked_add(usize::try_from(box_size).ok()?)?;
+        let box_end = cursor.checked_add(box_size)?;
         if box_end > end {
             return None;
         }
-
-        let payload_start = cursor.checked_add(usize::try_from(header_size).ok()?)?;
         if box_type == name {
             return Some(Mp4Box {
-                payload_start,
+                payload_start: cursor.checked_add(header_size)?,
                 end: box_end,
             });
         }
-
         cursor = box_end;
     }
-
     None
 }
 
@@ -889,6 +886,15 @@ fn content_disposition_filename(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn motionbgs_clients_reuse_http_connections() {
+        crate::downloads::progress_tests::assert_client_connection_reuse(
+            || MotionBgsClient::new().unwrap().http,
+            USER_AGENT,
+        )
+        .await;
+    }
 
     const LISTING_HTML: &str = r#"
         <div class=tmb>
@@ -1031,6 +1037,57 @@ mod tests {
         let bytes = [ftyp, moov].concat();
 
         assert_eq!(mp4_duration_ms(&bytes), Some(2_500));
+    }
+
+    #[test]
+    fn mp4_file_duration_reads_metadata_after_large_media_box() {
+        use std::io::Write;
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        let media_box_size = 1024 * 1024_u32;
+        file.write_all(&media_box_size.to_be_bytes()).unwrap();
+        file.write_all(b"mdat").unwrap();
+        file.seek(SeekFrom::Start(media_box_size as u64)).unwrap();
+        let mut payload = vec![0_u8; 32];
+        payload[0] = 1;
+        payload[20..24].copy_from_slice(&1_000_u32.to_be_bytes());
+        payload[24..32].copy_from_slice(&12_345_u64.to_be_bytes());
+        let moov = mp4_box(b"moov", &mp4_box(b"mvhd", &payload));
+        file.write_all(&moov).unwrap();
+        file.flush().unwrap();
+        assert_eq!(mp4_file_duration_ms(file.path()), Some(12_345));
+
+        struct CountedReader {
+            file: std::fs::File,
+            read_bytes: usize,
+        }
+        impl Read for CountedReader {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                let count = self.file.read(buffer)?;
+                self.read_bytes += count;
+                Ok(count)
+            }
+        }
+        impl Seek for CountedReader {
+            fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+                self.file.seek(position)
+            }
+        }
+        let mut reader = CountedReader {
+            file: file.reopen().unwrap(),
+            read_bytes: 0,
+        };
+        let length = reader.file.metadata().unwrap().len();
+        assert_eq!(mp4_reader_duration_ms(&mut reader, length), Some(12_345));
+        assert!(
+            reader.read_bytes < 100,
+            "media payload should be skipped with seek"
+        );
+    }
+
+    #[test]
+    fn mp4_duration_rejects_box_outside_file_bounds() {
+        let bytes = [100_u32.to_be_bytes().as_slice(), b"moov"].concat();
+        assert_eq!(mp4_duration_ms(&bytes), None);
     }
 
     #[test]

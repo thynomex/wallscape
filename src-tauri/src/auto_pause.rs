@@ -4,7 +4,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 use tauri::Manager;
-use windows::Win32::Foundation::{BOOL, HANDLE, HWND, LPARAM, RECT};
+use windows::core::BOOL;
+use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows::Win32::Graphics::Gdi::{
     CombineRgn, CreateRectRgn, CreateRectRgnIndirect, DeleteObject, EnumDisplayMonitors,
@@ -53,10 +54,8 @@ fn run_auto_pause_loop(app_handle: tauri::AppHandle, runtime: WallpaperRuntime) 
             continue;
         };
 
-        // Skip the snapshot syscalls entirely when the feature is off or no
-        // wallpaper is running.
-        let desired = settings.auto_pause_enabled
-            && runtime.is_active()
+        let desired = runtime.is_active()
+            && settings.auto_pause_enabled
             && should_auto_pause(&settings, AutoPauseSnapshot::detect(&settings));
 
         if runtime.is_auto_paused() != desired {
@@ -106,10 +105,18 @@ fn should_auto_pause(settings: &Settings, snapshot: AutoPauseSnapshot) -> bool {
             || (settings.auto_pause_display_sleep && snapshot.display_unavailable))
 }
 
+fn console_display_off_from_notification(setting: &POWERBROADCAST_SETTING) -> Option<bool> {
+    if setting.PowerSetting != GUID_CONSOLE_DISPLAY_STATE || setting.DataLength < 4 {
+        return None;
+    }
+    // The Windows DWORD values are 0 = off, 1 = on, and 2 = dimmed.
+    Some(setting.Data[0] == 0)
+}
+
 /// Register for console display state changes (on/dim/off). The callback keeps
 /// [`CONSOLE_DISPLAY_OFF`] current so playback pauses while monitors are dark
 /// even though the session is unlocked. The registration handle is
-/// intentionally leaked — it must live for the process lifetime.
+/// intentionally leaked. It must live for the process lifetime.
 fn register_display_state_notification() {
     unsafe extern "system" fn on_power_setting_change(
         _context: *const core::ffi::c_void,
@@ -117,11 +124,12 @@ fn register_display_state_notification() {
         setting: *const core::ffi::c_void,
     ) -> u32 {
         let setting = setting as *const POWERBROADCAST_SETTING;
-        if !setting.is_null() && (*setting).PowerSetting == GUID_CONSOLE_DISPLAY_STATE {
-            // Data[0]: 0 = off, 1 = on, 2 = dimmed.
-            let display_on = (*setting).Data[0] != 0;
-            CONSOLE_DISPLAY_OFF.store(!display_on, Ordering::Relaxed);
-            tracing::debug!("Console display state changed: on = {}", display_on);
+        if let Some(display_off) = setting
+            .as_ref()
+            .and_then(console_display_off_from_notification)
+        {
+            CONSOLE_DISPLAY_OFF.store(display_off, Ordering::Relaxed);
+            tracing::debug!("Console display state changed: on = {}", !display_off);
         }
         0
     }
@@ -202,8 +210,8 @@ fn all_monitors_occluded() -> bool {
 
             let window_region = CreateRectRgnIndirect(&rect);
             if !window_region.is_invalid() {
-                let _ = CombineRgn(covered, covered, window_region, RGN_OR);
-                let _ = DeleteObject(window_region);
+                let _ = CombineRgn(Some(covered), Some(covered), Some(window_region), RGN_OR);
+                let _ = DeleteObject(window_region.into());
             }
 
             true.into()
@@ -240,9 +248,14 @@ fn all_monitors_occluded() -> bool {
                     return false.into();
                 }
 
-                let uncovered = CombineRgn(monitor_region, monitor_region, state.covered, RGN_DIFF);
+                let uncovered = CombineRgn(
+                    Some(monitor_region),
+                    Some(monitor_region),
+                    Some(state.covered),
+                    RGN_DIFF,
+                );
                 let occluded = uncovered == NULLREGION;
-                let _ = DeleteObject(monitor_region);
+                let _ = DeleteObject(monitor_region.into());
 
                 if !occluded {
                     state.all_occluded = false;
@@ -265,7 +278,7 @@ fn all_monitors_occluded() -> bool {
             };
 
             let monitors_enumerated = EnumDisplayMonitors(
-                HDC(std::ptr::null_mut()),
+                None,
                 None,
                 Some(check_monitor_occluded),
                 LPARAM(&mut state as *mut _ as isize),
@@ -275,7 +288,7 @@ fn all_monitors_occluded() -> bool {
             all_occluded = monitors_enumerated && state.monitor_count > 0 && state.all_occluded;
         }
 
-        let _ = DeleteObject(covered);
+        let _ = DeleteObject(covered.into());
         all_occluded
     }
 }
@@ -295,7 +308,7 @@ fn is_window_cloaked(hwnd: HWND) -> bool {
 }
 
 /// Click-through overlays (game overlays, screen tinting tools) span whole
-/// monitors while being visually transparent — they must not count as cover.
+/// monitors while being visually transparent. They must not count as cover.
 fn is_click_through_overlay(hwnd: HWND) -> bool {
     let ex_style = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;
     ex_style & WS_EX_TRANSPARENT.0 != 0
@@ -395,6 +408,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn console_display_notifications_distinguish_off_on_and_dimmed() {
+        let mut setting = POWERBROADCAST_SETTING {
+            PowerSetting: GUID_CONSOLE_DISPLAY_STATE,
+            DataLength: 4,
+            Data: [0],
+        };
+        assert_eq!(console_display_off_from_notification(&setting), Some(true));
+        setting.Data[0] = 1;
+        assert_eq!(console_display_off_from_notification(&setting), Some(false));
+        setting.Data[0] = 2;
+        assert_eq!(console_display_off_from_notification(&setting), Some(false));
+        setting.DataLength = 0;
+        assert_eq!(console_display_off_from_notification(&setting), None);
+        setting.DataLength = 4;
+        setting.PowerSetting = Default::default();
+        assert_eq!(console_display_off_from_notification(&setting), None);
+    }
+
+    #[test]
     fn auto_pause_requires_master_toggle() {
         let settings = Settings {
             auto_pause_enabled: false,
@@ -468,6 +500,38 @@ mod tests {
                 desktop_occluded: true,
                 ..Default::default()
             }
+        ));
+    }
+
+    #[test]
+    fn display_sleep_rule_handles_an_unlocked_session_with_powered_off_displays() {
+        let settings = Settings {
+            auto_pause_on_battery: false,
+            auto_pause_fullscreen_apps: false,
+            auto_pause_occluded: false,
+            auto_pause_remote_session: false,
+            auto_pause_display_sleep: true,
+            ..Settings::default()
+        };
+        let snapshot = AutoPauseSnapshot {
+            display_unavailable: true,
+            ..Default::default()
+        };
+
+        assert!(should_auto_pause(&settings, snapshot));
+        assert!(!should_auto_pause(
+            &Settings {
+                auto_pause_display_sleep: false,
+                ..settings.clone()
+            },
+            snapshot,
+        ));
+        assert!(!should_auto_pause(
+            &Settings {
+                auto_pause_enabled: false,
+                ..settings
+            },
+            snapshot,
         ));
     }
 

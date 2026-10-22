@@ -1,6 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use windows::Win32::Foundation::{BOOL, LPARAM, RECT};
+use windows::core::BOOL;
+use windows::Win32::Foundation::{LPARAM, RECT};
 use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFOEXW,
 };
@@ -38,14 +39,14 @@ impl MonitorManager {
         unsafe {
             // Enumerate all display monitors
             let _ = EnumDisplayMonitors(
-                HDC(std::ptr::null_mut()),
+                None,
                 None,
                 Some(monitor_enum_proc),
                 LPARAM(&mut self.monitors as *mut Vec<Monitor> as isize),
             );
         }
 
-        tracing::info!("Detected {} monitor(s)", self.monitors.len());
+        tracing::debug!("Detected {} monitor(s)", self.monitors.len());
         for monitor in &self.monitors {
             tracing::debug!(
                 "  Monitor: {} ({}x{} at {}, {})",

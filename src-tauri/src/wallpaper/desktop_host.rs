@@ -8,9 +8,8 @@ use super::window_lookup::{
 use super::window_snapshot::{window_class_name, window_snapshot};
 use super::workerw_search::WorkerWSearch;
 use anyhow::{anyhow, Result};
-use windows::Win32::Foundation::{
-    GetLastError, SetLastError, BOOL, ERROR_SUCCESS, HWND, LPARAM, WPARAM,
-};
+use windows::core::BOOL;
+use windows::Win32::Foundation::{GetLastError, SetLastError, ERROR_SUCCESS, HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, IsWindowVisible, SendMessageTimeoutW, SMTO_NORMAL, WS_EX_NOREDIRECTIONBITMAP,
 };
@@ -25,9 +24,9 @@ pub(super) fn find_or_create_desktop_parent() -> Result<DesktopParent> {
 fn find_or_create_desktop_parent_candidate() -> Result<Option<DesktopParent>> {
     use std::time::Instant;
     let start_discovery = Instant::now();
-    tracing::info!("Finding WorkerW window for desktop injection");
+    tracing::debug!("Finding WorkerW window for desktop injection");
     let desktop_bounds = virtual_desktop_bounds()?;
-    tracing::info!(
+    tracing::debug!(
         "Virtual desktop bounds for wallpaper placement: ({}, {})-({}, {}) {}x{}",
         desktop_bounds.x,
         desktop_bounds.y,
@@ -45,7 +44,7 @@ fn find_or_create_desktop_parent_candidate() -> Result<Option<DesktopParent>> {
         tracing::debug!("Found Progman window: {}", describe_window(progman));
         let raised_desktop = has_extended_style(progman, WS_EX_NOREDIRECTIONBITMAP.0 as isize);
         if raised_desktop {
-            tracing::info!("Detected Windows raised desktop with layered SHELLDLL_DefView");
+            tracing::debug!("Detected Windows raised desktop with layered SHELLDLL_DefView");
         }
 
         // Step 2: Send 0x052C message to spawn WorkerW window.
@@ -84,7 +83,7 @@ fn find_or_create_desktop_parent_candidate() -> Result<Option<DesktopParent>> {
 
         if raised_desktop {
             if let Some(parent) = raised_desktop_parent(progman, desktop_bounds)? {
-                tracing::info!(
+                tracing::debug!(
                     "Found raised desktop parent for injection: progman={:?}, shell_defview={:?}, workerw={:?}",
                     HWND(parent.hwnd as *mut _),
                     parent.shell_defview.map(|hwnd| HWND(hwnd as *mut _)),
@@ -107,7 +106,7 @@ fn find_or_create_desktop_parent_candidate() -> Result<Option<DesktopParent>> {
             enumerate_desktop_hosts(search_ptr)?;
 
             if let Some(hwnd) = search.target_workerw {
-                tracing::info!(
+                tracing::debug!(
                     "Found WorkerW window for injection: {} (attempt {}, elapsed {:?})",
                     hwnd,
                     attempt,
@@ -121,7 +120,7 @@ fn find_or_create_desktop_parent_candidate() -> Result<Option<DesktopParent>> {
             }
 
             if let Some(hwnd) = find_workerw_after(search.icon_parent, desktop_bounds)? {
-                tracing::info!(
+                tracing::debug!(
                     "Found fallback WorkerW window for injection: {} (attempt {}, elapsed {:?})",
                     hwnd,
                     attempt,
@@ -138,7 +137,7 @@ fn find_or_create_desktop_parent_candidate() -> Result<Option<DesktopParent>> {
             }
 
             if let Some(hwnd) = search.fallback_workerw {
-                tracing::info!(
+                tracing::debug!(
                     "Found WorkerW fallback without desktop icons: {} (attempt {}, elapsed {:?})",
                     hwnd,
                     attempt,
@@ -256,7 +255,7 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
                             );
                             return BOOL(1);
                         }
-                        tracing::info!("Found target WorkerW for injection: {:?}", target_workerw);
+                        tracing::debug!("Found target WorkerW for injection: {:?}", target_workerw);
                         search.target_workerw = Some(target_workerw.0 as isize);
                         search.stopped_after_match = true;
                         SetLastError(ERROR_SUCCESS);

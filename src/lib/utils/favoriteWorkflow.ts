@@ -21,8 +21,7 @@ interface FavoriteActions {
 }
 
 interface SettingsActions {
-  updateSettings(patch: Partial<Settings>): Promise<void>;
-  settingsError(): string | null;
+  updateSettings(patch: Partial<Settings>): Promise<StoreActionResult<Settings>>;
 }
 
 export type FavoriteRotationOutcome =
@@ -114,12 +113,8 @@ export async function updateFavoriteRotationEnabled(
     return { ok: false, error: "Add a favorite before starting rotation" };
   }
 
-  await actions.updateSettings({ favoriteRotationEnabled: enabled });
-
-  const error = actions.settingsError();
-  if (error) {
-    return { ok: false, error };
-  }
+  const result = await actions.updateSettings({ favoriteRotationEnabled: enabled });
+  if (!result.ok) return result;
 
   return {
     ok: true,
@@ -133,12 +128,8 @@ export async function updateFavoriteRotationInterval(
   actions: SettingsActions,
 ): Promise<SettingsUpdateOutcome> {
   const next = normalizeFavoriteRotationInterval(minutes);
-  await actions.updateSettings({ favoriteRotationIntervalMinutes: next });
-
-  const error = actions.settingsError();
-  if (error) {
-    return { ok: false, error };
-  }
+  const result = await actions.updateSettings({ favoriteRotationIntervalMinutes: next });
+  if (!result.ok) return result;
 
   return {
     ok: true,

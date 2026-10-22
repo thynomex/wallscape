@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { RuntimeStatus } from "$lib/types/generated";
 import type {
   BatchImportItem,
   BatchImportResult,
@@ -316,20 +317,24 @@ export function cleanupMissingLibraryEntries(): Promise<StorageCleanupResult> {
   return invoke<StorageCleanupResult>("cleanup_missing_library_entries");
 }
 
-export function setWallpaperPaused(paused: boolean): Promise<void> {
+export function getRuntimeStatus(): Promise<RuntimeStatus> {
+  return invoke("get_runtime_status");
+}
+
+export function setWallpaperPaused(paused: boolean): Promise<RuntimeStatus> {
   return invoke("set_wallpaper_paused", { paused });
 }
 
 export function setWallpaperSpeed(
   speed: number,
   monitorId?: string | null,
-): Promise<void> {
+): Promise<RuntimeStatus> {
   return invoke("set_wallpaper_speed", { speed, monitorId });
 }
 
 export function setWallpaperFitMode(
   mode: string,
   monitorId?: string | null,
-): Promise<void> {
+): Promise<RuntimeStatus> {
   return invoke("set_wallpaper_fit_mode", { mode, monitorId });
 }

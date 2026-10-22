@@ -1,5 +1,5 @@
 use windows::core::PWSTR;
-use windows::Win32::Foundation::{CloseHandle, BOOL, HWND, RECT};
+use windows::Win32::Foundation::{CloseHandle, HWND, RECT};
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -89,7 +89,7 @@ fn process_path(pid: u32) -> Option<String> {
     }
 
     unsafe {
-        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, BOOL(0), pid).ok()?;
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
         let mut buffer = [0u16; 1024];
         let mut len = buffer.len() as u32;
         let result = QueryFullProcessImageNameW(

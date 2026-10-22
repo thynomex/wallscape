@@ -145,8 +145,11 @@
     };
   });
 
+  let detailWallpapers = $derived(
+    activeView === "explore" ? store.searchResults ?? store.wallpapers : store.wallpapers,
+  );
   let detailWallpaper = $derived(
-    detailIndex !== null ? store.wallpapers[detailIndex] ?? null : null,
+    detailIndex !== null ? detailWallpapers[detailIndex] ?? null : null,
   );
   let wallhavenDetail = $derived(
     wallhavenDetailIndex !== null
@@ -198,7 +201,7 @@
     const itemCount = carouselWallpapers.length;
     const activeFeaturedId = store.featured?.id;
     const autoplayAvailable =
-      activeView === "home" && !carouselPaused && itemCount > 1 && appVisibility.visible;
+      activeView === "home" && appVisibility.visible && !carouselPaused && itemCount > 1;
 
     if (!autoplayAvailable) return;
 
@@ -344,7 +347,6 @@
       previous,
       {
         updateSettings: (patch) => settingsStore.update(patch),
-        settingsError: () => settingsStore.error,
       },
     );
 
@@ -359,7 +361,6 @@
     const previous = settingsStore.settings.favoriteRotationIntervalMinutes;
     const result = await updateFavoriteRotationIntervalWorkflow(minutes, previous, {
       updateSettings: (patch) => settingsStore.update(patch),
-      settingsError: () => settingsStore.error,
     });
 
     if (!result.ok) {
@@ -424,7 +425,7 @@
   }
 
   function openDetail(wallpaper: Wallpaper) {
-    detailIndex = indexById(store.wallpapers, wallpaper.id);
+    detailIndex = indexById(detailWallpapers, wallpaper.id);
     wallhavenDetailIndex = null;
     motionBgsDetailIndex = null;
   }
@@ -456,7 +457,7 @@
 
   function stepDetail(direction: number) {
     if (detailIndex === null) return;
-    detailIndex = nextCircularIndex(detailIndex, store.wallpapers.length, direction);
+    detailIndex = nextCircularIndex(detailIndex, detailWallpapers.length, direction);
   }
 
   function stepWallhavenDetail(direction: number) {
@@ -881,6 +882,9 @@
       bind:motionBgsQuery
       bind:motionBgsCategory
       wallpapers={store.wallpapers}
+      searchResults={store.searchResults}
+      searchLoading={store.searchLoading}
+      searchError={store.searchError}
       featured={store.featured}
       selected={store.selected}
       loading={store.loading}

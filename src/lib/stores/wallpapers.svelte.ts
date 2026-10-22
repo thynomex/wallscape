@@ -71,8 +71,11 @@ import type {
 import type { RemoteDownloadStates } from "$lib/types/downloads";
 
 /** Reactive app state — Svelte 5 runes in a module (`.svelte.ts`). */
-class WallpaperStore {
+export class WallpaperStore {
   wallpapers = $state<Wallpaper[]>([]);
+  searchResults = $state<Wallpaper[] | null>(null);
+  searchLoading = $state(false);
+  searchError = $state<string | null>(null);
   monitors = $state<Monitor[]>([]);
   collections = $state<Collection[]>([]);
   collectionMemberships = $state<CollectionMembership[]>([]);

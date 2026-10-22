@@ -47,9 +47,11 @@ pub(super) fn add(
         ),
     )?;
 
-    get_by_file_path(conn, file_path)?
-        .map(|wallpaper| wallpaper.id)
-        .ok_or(rusqlite::Error::QueryReturnedNoRows)
+    conn.query_row(
+        "SELECT id FROM wallpapers WHERE file_path = ?1",
+        [file_path],
+        |row| row.get(0),
+    )
 }
 
 pub(super) fn get(conn: &Connection, id: i64) -> Result<Option<Wallpaper>> {

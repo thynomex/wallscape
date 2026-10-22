@@ -1,16 +1,17 @@
 use super::shell::open_url;
 use crate::db::WallpaperMetadata;
 use crate::downloads::{
-    emit_download_progress, should_retry_download_error, DownloadProgressEvent,
-    REMOTE_DOWNLOAD_MAX_ATTEMPTS, REMOTE_DOWNLOAD_RETRY_DELAY_MS,
+    acquire_download_slot, emit_download_progress, should_retry_download_error,
+    DownloadProgressEvent, REMOTE_DOWNLOAD_MAX_ATTEMPTS, REMOTE_DOWNLOAD_RETRY_DELAY_MS,
 };
 use crate::wallhaven::{
     DownloadedImage, WallhavenClient, WallhavenSearchRequest, WallhavenSearchResponse,
     WallhavenWallpaper, WALLHAVEN_SOURCE_NAME,
 };
-use crate::wallhaven_cache::store_wallhaven_image;
+use crate::wallhaven_cache::{store_wallhaven_image, wallhaven_cache_dir};
 use crate::AppDatabase;
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 use tokio::time::{sleep, Duration};
 
 #[derive(Debug, Deserialize)]
@@ -77,6 +78,7 @@ pub async fn download_wallhaven_wallpaper(
     db: tauri::State<'_, AppDatabase>,
     wallpaper: WallhavenWallpaper,
 ) -> Result<DownloadWallhavenResult, String> {
+    let _slot = acquire_download_slot().await;
     if let Some(existing) =
         db.0.lock()
             .get_wallpaper_by_source(WALLHAVEN_SOURCE_NAME, &wallpaper.id)
@@ -101,61 +103,66 @@ pub async fn download_wallhaven_wallpaper(
     let (image, final_attempt) =
         download_wallhaven_image_with_retries(&app_handle, &client, &wallpaper).await?;
 
+    let received_bytes = image.file.bytes;
     emit_wallhaven_download_status(
         &app_handle,
         &wallpaper.id,
         "saving",
         final_attempt,
-        image.bytes.len() as u64,
-        Some(image.bytes.len() as u64),
+        received_bytes,
+        Some(received_bytes),
         Some("Saving to library".to_string()),
     );
 
-    let image_path =
-        store_wallhaven_image(&app_handle, &wallpaper.id, image.extension, &image.bytes)?;
+    let save_app = app_handle.clone();
+    let source_id = wallpaper.id.clone();
+    let imported = tokio::task::spawn_blocking(move || {
+        let metadata = WallpaperMetadata {
+            title: format!("Wallhaven {} {}", wallpaper.category, wallpaper.id),
+            thumbnail_path: Some(wallpaper.thumbs.large.clone()),
+            tags: vec![
+                WALLHAVEN_SOURCE_NAME.to_string(),
+                wallpaper.category.clone(),
+                wallpaper.purity.clone(),
+            ],
+            width: wallpaper.dimension_x,
+            height: wallpaper.dimension_y,
+            fps: 0,
+            duration_ms: 0,
+            media_type: "image".to_string(),
+            source: Some(WALLHAVEN_SOURCE_NAME.to_string()),
+            source_id: Some(wallpaper.id.clone()),
+        };
 
-    let metadata = WallpaperMetadata {
-        title: format!("Wallhaven {} {}", wallpaper.category, wallpaper.id),
-        thumbnail_path: Some(wallpaper.thumbs.large.clone()),
-        tags: vec![
-            WALLHAVEN_SOURCE_NAME.to_string(),
-            wallpaper.category.clone(),
-            wallpaper.purity.clone(),
-        ],
-        width: wallpaper.dimension_x,
-        height: wallpaper.dimension_y,
-        fps: 0,
-        duration_ms: 0,
-        media_type: "image".to_string(),
-        source: Some(WALLHAVEN_SOURCE_NAME.to_string()),
-        source_id: Some(wallpaper.id.clone()),
-    };
-
-    let file_path = image_path.to_string_lossy().to_string();
-    let id =
-        db.0.lock()
-            .add_wallpaper(&metadata, &file_path)
-            .map_err(|e| format!("Failed to save Wallhaven wallpaper: {}", e))?;
-
-    let imported = db
-        .0
-        .lock()
-        .get_wallpaper(id)
-        .map_err(|e| format!("Failed to read Wallhaven wallpaper: {}", e))?
-        .ok_or_else(|| "Downloaded Wallhaven wallpaper was not found after saving".to_string())?;
+        let db = save_app.state::<AppDatabase>();
+        let db_guard = db.0.lock();
+        if let Some(existing) = db_guard
+            .get_wallpaper_by_source(WALLHAVEN_SOURCE_NAME, &wallpaper.id)
+            .map_err(|error| format!("Failed to check Wallhaven library entry: {error}"))?
+        {
+            return Ok(existing);
+        }
+        store_wallhaven_image(&wallpaper.id, image.extension, image.file, |path| {
+            db_guard
+                .add_wallpaper_and_get(&metadata, &path.to_string_lossy())
+                .map_err(|error| format!("Failed to register Wallhaven wallpaper: {error}"))
+        })
+    })
+    .await
+    .map_err(|error| format!("Failed to save Wallhaven download: {error}"))??;
 
     emit_wallhaven_download_status(
         &app_handle,
-        &wallpaper.id,
+        &source_id,
         "complete",
         final_attempt,
-        image.bytes.len() as u64,
-        Some(image.bytes.len() as u64),
+        received_bytes,
+        Some(received_bytes),
         Some("Download complete".to_string()),
     );
 
     Ok(DownloadWallhavenResult {
-        source_id: wallpaper.id,
+        source_id,
         wallpaper: imported,
     })
 }
@@ -165,6 +172,7 @@ async fn download_wallhaven_image_with_retries(
     client: &WallhavenClient,
     wallpaper: &WallhavenWallpaper,
 ) -> Result<(DownloadedImage, u32), String> {
+    let cache_dir = wallhaven_cache_dir(app_handle)?;
     let mut attempt = 1;
 
     loop {
@@ -185,7 +193,7 @@ async fn download_wallhaven_image_with_retries(
         let progress_app_handle = app_handle.clone();
         let progress_source_id = wallpaper.id.clone();
         let result = client
-            .download_image_with_progress(&wallpaper.path, move |progress| {
+            .download_image_with_progress(&wallpaper.path, &cache_dir, move |progress| {
                 emit_wallhaven_download_status(
                     &progress_app_handle,
                     &progress_source_id,

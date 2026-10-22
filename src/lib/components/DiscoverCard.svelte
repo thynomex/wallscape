@@ -41,14 +41,19 @@
   const motionBgsDownloads = $derived(
     isMotionBgsWallpaper(wallpaper) ? motionBgsDownloadOptions(wallpaper) : [],
   );
-  const selectedMotionBgsDownload = $derived(
-    motionBgsDownloads.find((download) => download.quality === selectedMotionBgsQuality) ??
-      (isMotionBgsWallpaper(wallpaper)
-        ? (motionBgsDownloads.find((download) => download.quality === wallpaper.quality) ?? null)
-        : null) ??
-      motionBgsDownloads[0] ??
-      null,
-  );
+  const selectedMotionBgsDownload = $derived.by(() => {
+    const selected = motionBgsDownloads.find(
+      (download) => download.quality === selectedMotionBgsQuality,
+    );
+    if (selected) return selected;
+
+    if (isMotionBgsWallpaper(wallpaper)) {
+      const preferred = motionBgsDownloads.find((download) => download.quality === wallpaper.quality);
+      if (preferred) return preferred;
+    }
+
+    return motionBgsDownloads[0] ?? null;
+  });
   const selectedWallpaper = $derived(
     isMotionBgsWallpaper(wallpaper)
       ? motionBgsWallpaperWithDownload(wallpaper, selectedMotionBgsDownload)

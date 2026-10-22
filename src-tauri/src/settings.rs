@@ -55,6 +55,10 @@ pub struct Settings {
     pub auto_pause_remote_session: bool,
     /// Pause live wallpapers when the interactive desktop is unavailable.
     pub auto_pause_display_sleep: bool,
+    /// Optional Discord webhook URL for automatic error diagnostics.
+    pub diagnostic_webhook_url: Option<String>,
+    /// Whether to automatically send diagnostic info to webhook on errors.
+    pub diagnostic_auto_send: bool,
     /// Default playback speed for video wallpapers (0.25x to 2.0x).
     pub default_playback_speed: f64,
     /// Default video fit mode for wallpapers: "fit", "fill", or "stretch".
@@ -100,6 +104,8 @@ impl Default for Settings {
             auto_pause_occluded: true,
             auto_pause_remote_session: true,
             auto_pause_display_sleep: true,
+            diagnostic_webhook_url: None,
+            diagnostic_auto_send: false,
             default_playback_speed: DEFAULT_PLAYBACK_SPEED,
             default_fit_mode: "fit".to_string(),
             default_fps_cap: None,
@@ -158,6 +164,13 @@ impl Settings {
             }
         }
 
+        settings.diagnostic_webhook_url = settings
+            .diagnostic_webhook_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .map(str::to_string);
+
         settings
     }
 }
@@ -188,6 +201,17 @@ mod tests {
         assert!(settings.auto_pause_occluded);
         assert!(settings.auto_pause_remote_session);
         assert!(settings.auto_pause_display_sleep);
+    }
+
+    #[test]
+    fn disabled_occlusion_setting_survives_serialization_and_normalization() {
+        let settings: Settings = serde_json::from_str(r#"{"autoPauseOccluded":false}"#)
+            .expect("existing occlusion preference should deserialize");
+        let serialized = serde_json::to_string(&settings.normalized()).unwrap();
+        let restored: Settings = serde_json::from_str(&serialized).unwrap();
+
+        assert!(!restored.auto_pause_occluded);
+        assert!(restored.auto_pause_enabled);
     }
 
     #[test]

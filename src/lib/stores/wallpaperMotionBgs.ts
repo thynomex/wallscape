@@ -10,18 +10,20 @@ import type {
   Wallpaper,
 } from "$lib/types/wallpaper";
 import type { RemoteDownloadStates } from "$lib/types/downloads";
+import { latestRequest } from "$lib/stores/latestRequest";
 import {
-  applyRemoteDownloadProgress,
-  failRemoteDownload,
+  failedRemoteDownloadState,
   formatRemoteDownloadStatus,
   initialRemoteDownloadState,
   isRemoteDownloadActive,
   listenForRemoteDownloadProgress,
+  normalizeDownloadProgress,
   remoteDownloadKey,
 } from "$lib/utils/downloadProgress";
 import { motionBgsDownloadSourceId } from "$lib/utils/motionbgsDownload";
 
 const MOTIONBGS_DOWNLOAD_SOURCE = "motionbgs";
+const beginSearch = latestRequest();
 
 export interface WallpaperMotionBgsState {
   wallpapers: Wallpaper[];
@@ -43,17 +45,20 @@ export async function searchMotionBgsIntoState(
   state: WallpaperMotionBgsState,
   args: MotionBgsSearchArgs,
 ) {
+  const isCurrent = beginSearch(state);
   state.motionBgsLoading = true;
   state.motionBgsError = null;
   try {
     const response = await searchMotionBgsApi(args);
+    if (!isCurrent()) return;
     state.motionBgsResults = response.data;
     state.motionBgsMeta = response.meta;
   } catch (e) {
+    if (!isCurrent()) return;
     state.motionBgsError = `Failed to search MotionBGS: ${e}`;
     console.error(e);
   } finally {
-    state.motionBgsLoading = false;
+    if (isCurrent()) state.motionBgsLoading = false;
   }
 }
 
@@ -73,14 +78,11 @@ export async function downloadMotionBgsIntoState(
     };
   }
 
-  state.remoteDownloads = {
-    ...state.remoteDownloads,
-    [downloadKey]: initialRemoteDownloadState(
-      MOTIONBGS_DOWNLOAD_SOURCE,
-      downloadSourceId,
-      wallpaper.fileSize > 0 ? wallpaper.fileSize : null,
-    ),
-  };
+  state.remoteDownloads[downloadKey] = initialRemoteDownloadState(
+    MOTIONBGS_DOWNLOAD_SOURCE,
+    downloadSourceId,
+    wallpaper.fileSize > 0 ? wallpaper.fileSize : null,
+  );
   state.motionBgsError = null;
   state.importStatus = `Downloading MotionBGS ${wallpaper.title}...`;
   state.importWarnings = [];
@@ -92,10 +94,7 @@ export async function downloadMotionBgsIntoState(
       unlistenProgress = await listenForRemoteDownloadProgress(
         downloadKey,
         (progress) => {
-          state.remoteDownloads = applyRemoteDownloadProgress(
-            state.remoteDownloads,
-            progress,
-          );
+          state.remoteDownloads[downloadKey] = normalizeDownloadProgress(progress);
           state.importStatus = formatRemoteDownloadStatus(
             state.remoteDownloads[downloadKey],
             `Downloading MotionBGS ${wallpaper.title}...`,
@@ -110,7 +109,7 @@ export async function downloadMotionBgsIntoState(
     const completedDownload = state.remoteDownloads[downloadKey];
     const fallbackBytes = Math.max(0, wallpaper.fileSize);
 
-    state.remoteDownloads = applyRemoteDownloadProgress(state.remoteDownloads, {
+    state.remoteDownloads[downloadKey] = normalizeDownloadProgress({
       source: MOTIONBGS_DOWNLOAD_SOURCE,
       sourceId: downloadSourceId,
       downloadKey,
@@ -131,8 +130,8 @@ export async function downloadMotionBgsIntoState(
     return { ok: true, value: importedFromList };
   } catch (e) {
     const error = `Failed to download MotionBGS wallpaper: ${e}`;
-    state.remoteDownloads = failRemoteDownload(
-      state.remoteDownloads,
+    state.remoteDownloads[downloadKey] = failedRemoteDownloadState(
+      state.remoteDownloads[downloadKey],
       MOTIONBGS_DOWNLOAD_SOURCE,
       downloadSourceId,
       error,

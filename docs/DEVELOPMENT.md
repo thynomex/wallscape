@@ -31,7 +31,7 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
 Regenerate TypeScript bindings after changing exported Rust DTOs:
 
 ```powershell
-cargo test --manifest-path src-tauri/Cargo.toml export_typescript_bindings
+cargo test --manifest-path src-tauri/Cargo.toml export_typescript_bindings -- --ignored
 ```
 
 ## Release build

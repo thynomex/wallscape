@@ -2,7 +2,6 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   DownloadProgressEvent,
   RemoteDownloadState,
-  RemoteDownloadStates,
   RemoteDownloadStatus,
 } from "$lib/types/downloads";
 
@@ -41,36 +40,19 @@ export function initialRemoteDownloadState(
   };
 }
 
-export function applyRemoteDownloadProgress(
-  states: RemoteDownloadStates,
-  progress: DownloadProgressEvent,
-): RemoteDownloadStates {
-  const normalized = normalizeDownloadProgress(progress);
-  return {
-    ...states,
-    [normalized.downloadKey]: normalized,
-  };
-}
-
-export function failRemoteDownload(
-  states: RemoteDownloadStates,
+export function failedRemoteDownloadState(
+  previous: RemoteDownloadState | undefined,
   source: string,
   sourceId: string,
   error: string,
-): RemoteDownloadStates {
-  const key = remoteDownloadKey(source, sourceId);
-  const previous = states[key] ?? initialRemoteDownloadState(source, sourceId);
-
+): RemoteDownloadState {
   return {
-    ...states,
-    [key]: {
-      ...previous,
-      status: "failed",
-      error,
-      message: error,
-      canRetry: true,
-      updatedAt: Date.now(),
-    },
+    ...(previous ?? initialRemoteDownloadState(source, sourceId)),
+    status: "failed",
+    error,
+    message: error,
+    canRetry: true,
+    updatedAt: Date.now(),
   };
 }
 
@@ -133,7 +115,7 @@ export async function listenForRemoteDownloadProgress(
   });
 }
 
-function normalizeDownloadProgress(progress: DownloadProgressEvent): RemoteDownloadState {
+export function normalizeDownloadProgress(progress: DownloadProgressEvent): RemoteDownloadState {
   const status = normalizeStatus(progress.status);
   const message = progress.message ?? null;
 

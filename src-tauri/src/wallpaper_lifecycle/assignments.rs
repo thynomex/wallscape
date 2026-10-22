@@ -182,6 +182,48 @@ mod tests {
     }
 
     #[test]
+    fn retained_displays_survive_database_reload_after_single_monitor_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("assignments.db");
+        let db = AppDatabase(parking_lot::Mutex::new(Database::new(&path).unwrap()));
+        let retained = BTreeMap::from([
+            ("DISPLAY1".into(), "ambient.mp4".into()),
+            ("DISPLAY2".into(), "ambient.mp4".into()),
+            ("DISPLAY3".into(), "ambient.mp4".into()),
+        ]);
+        persist_target_with_retained_assignments(
+            &db,
+            &WallpaperTarget::Monitor("DISPLAY1".into()),
+            "focus.mp4",
+            &retained,
+        );
+        persist_target_with_retained_assignments(
+            &db,
+            &WallpaperTarget::Monitor("DISPLAY2".into()),
+            "forest.jpg",
+            &BTreeMap::new(),
+        );
+        drop(db);
+
+        let db = AppDatabase(parking_lot::Mutex::new(Database::new(&path).unwrap()));
+        assert_eq!(
+            load(&db).unwrap(),
+            BTreeMap::from([
+                ("DISPLAY1".into(), "focus.mp4".into()),
+                ("DISPLAY2".into(), "forest.jpg".into()),
+                ("DISPLAY3".into(), "ambient.mp4".into()),
+            ])
+        );
+        persist_target_with_retained_assignments(
+            &db,
+            &WallpaperTarget::All,
+            "reset.mp4",
+            &BTreeMap::new(),
+        );
+        assert!(load(&db).unwrap().is_empty());
+    }
+
+    #[test]
     fn all_target_clears_assignments() {
         let current = BTreeMap::from([(
             "DISPLAY1".to_string(),

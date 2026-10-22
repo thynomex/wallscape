@@ -41,8 +41,8 @@ pub(super) fn find_child_window(
     unsafe {
         SetLastError(ERROR_SUCCESS);
         hwnd_result_or_none(FindWindowExW(
-            parent,
-            child_after,
+            Some(parent),
+            Some(child_after),
             PCWSTR::from_raw(class_name.as_ptr()),
             PCWSTR::null(),
         ))

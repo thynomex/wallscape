@@ -1,15 +1,16 @@
 use crate::db::WallpaperMetadata;
 use crate::downloads::{
-    emit_download_progress, should_retry_download_error, DownloadProgressEvent,
-    REMOTE_DOWNLOAD_MAX_ATTEMPTS, REMOTE_DOWNLOAD_RETRY_DELAY_MS,
+    acquire_download_slot, emit_download_progress, should_retry_download_error,
+    DownloadProgressEvent, REMOTE_DOWNLOAD_MAX_ATTEMPTS, REMOTE_DOWNLOAD_RETRY_DELAY_MS,
 };
 use crate::motionbgs::{
-    motionbgs_download_source_id, mp4_duration_ms, DownloadedMotionBgsVideo, MotionBgsClient,
+    motionbgs_download_source_id, mp4_file_duration_ms, DownloadedMotionBgsVideo, MotionBgsClient,
     MotionBgsSearchRequest, MotionBgsSearchResponse, MotionBgsWallpaper, MOTIONBGS_SOURCE_NAME,
 };
-use crate::motionbgs_cache::store_motionbgs_video;
+use crate::motionbgs_cache::{motionbgs_cache_dir, store_motionbgs_video};
 use crate::AppDatabase;
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 use tokio::time::{sleep, Duration};
 
 #[derive(Debug, Deserialize)]
@@ -49,6 +50,7 @@ pub async fn download_motionbgs_wallpaper(
     db: tauri::State<'_, AppDatabase>,
     wallpaper: MotionBgsWallpaper,
 ) -> Result<DownloadMotionBgsResult, String> {
+    let _slot = acquire_download_slot().await;
     let download_source_id = motionbgs_download_source_id(&wallpaper);
 
     if let Some(existing) =
@@ -80,63 +82,65 @@ pub async fn download_motionbgs_wallpaper(
     )
     .await?;
 
+    let received_bytes = video.file.bytes;
     emit_motionbgs_download_status(
         &app_handle,
         &download_source_id,
         "saving",
         final_attempt,
-        video.bytes.len() as u64,
-        Some(video.bytes.len() as u64),
+        received_bytes,
+        Some(received_bytes),
         Some("Saving to library".to_string()),
     );
 
-    let video_path = store_motionbgs_video(
-        &app_handle,
-        &download_source_id,
-        video.extension,
-        &video.bytes,
-    )?;
-    let duration_ms = mp4_duration_ms(&video.bytes).unwrap_or(0);
+    let save_app = app_handle.clone();
+    let save_source_id = download_source_id.clone();
+    let imported = tokio::task::spawn_blocking(move || {
+        let duration_ms = mp4_file_duration_ms(video.file.path()).unwrap_or(0);
+        let mut tags = vec![
+            MOTIONBGS_SOURCE_NAME.to_string(),
+            video.download.quality.clone(),
+        ];
+        tags.extend(video.wallpaper.tags.clone());
 
-    let mut tags = vec![
-        MOTIONBGS_SOURCE_NAME.to_string(),
-        video.download.quality.clone(),
-    ];
-    tags.extend(video.wallpaper.tags.clone());
+        let metadata = WallpaperMetadata {
+            title: video.wallpaper.title.clone(),
+            thumbnail_path: Some(video.wallpaper.thumbnail_url.clone()),
+            tags,
+            width: video.download.width,
+            height: video.download.height,
+            fps: 60,
+            duration_ms,
+            media_type: "video".to_string(),
+            source: Some(MOTIONBGS_SOURCE_NAME.to_string()),
+            source_id: Some(save_source_id.clone()),
+        };
 
-    let metadata = WallpaperMetadata {
-        title: video.wallpaper.title.clone(),
-        thumbnail_path: Some(video.wallpaper.thumbnail_url.clone()),
-        tags,
-        width: video.download.width,
-        height: video.download.height,
-        fps: 60,
-        duration_ms,
-        media_type: "video".to_string(),
-        source: Some(MOTIONBGS_SOURCE_NAME.to_string()),
-        source_id: Some(download_source_id.clone()),
-    };
-
-    let file_path = video_path.to_string_lossy().to_string();
-    let id =
-        db.0.lock()
-            .add_wallpaper(&metadata, &file_path)
-            .map_err(|e| format!("Failed to save MotionBGS wallpaper: {}", e))?;
-
-    let imported = db
-        .0
-        .lock()
-        .get_wallpaper(id)
-        .map_err(|e| format!("Failed to read MotionBGS wallpaper: {}", e))?
-        .ok_or_else(|| "Downloaded MotionBGS wallpaper was not found after saving".to_string())?;
+        let db = save_app.state::<AppDatabase>();
+        let db_guard = db.0.lock();
+        // Another invocation may have completed while this one was downloading.
+        if let Some(existing) = db_guard
+            .get_wallpaper_by_source(MOTIONBGS_SOURCE_NAME, &save_source_id)
+            .map_err(|error| format!("Failed to check MotionBGS library entry: {error}"))?
+        {
+            return Ok(existing);
+        }
+        store_motionbgs_video(&save_source_id, video.extension, video.file, |path| {
+            db_guard
+                .add_wallpaper_and_get(&metadata, &path.to_string_lossy())
+                .map_err(|error| format!("Failed to register MotionBGS wallpaper: {error}"))
+        })
+    })
+    .await
+    .map_err(|error| format!("Failed to save MotionBGS download: {error}"))??;
 
     emit_motionbgs_download_status(
         &app_handle,
         &download_source_id,
         "complete",
         final_attempt,
-        video.bytes.len() as u64,
-        Some(video.bytes.len() as u64),
+        received_bytes,
+        Some(received_bytes),
         Some("Download complete".to_string()),
     );
 
@@ -152,6 +156,7 @@ async fn download_motionbgs_video_with_retries(
     wallpaper: &MotionBgsWallpaper,
     download_source_id: &str,
 ) -> Result<(DownloadedMotionBgsVideo, u32), String> {
+    let cache_dir = motionbgs_cache_dir(app_handle)?;
     let mut attempt = 1;
 
     loop {
@@ -172,7 +177,7 @@ async fn download_motionbgs_video_with_retries(
         let progress_app_handle = app_handle.clone();
         let progress_source_id = download_source_id.to_string();
         let result = client
-            .download_video_with_progress(wallpaper, move |progress| {
+            .download_video_with_progress(wallpaper, &cache_dir, move |progress| {
                 emit_motionbgs_download_status(
                     &progress_app_handle,
                     &progress_source_id,

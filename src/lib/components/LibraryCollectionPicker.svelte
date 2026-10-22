@@ -30,13 +30,19 @@
         wallpaper.id > 0 && !selectedCollectionWallpaperIds.has(wallpaper.id),
     ),
   );
+  let searchableAddableWallpapers = $derived(
+    addableWallpapers.map((wallpaper) => ({
+      wallpaper,
+      searchText: searchableWallpaperText(wallpaper),
+    })),
+  );
   let filteredAddableWallpapers = $derived.by(() => {
     const query = addSearch.trim().toLowerCase();
     if (!query) return addableWallpapers;
 
-    return addableWallpapers.filter((wallpaper) =>
-      searchableWallpaperText(wallpaper).includes(query),
-    );
+    return searchableAddableWallpapers
+      .filter(({ searchText }) => searchText.includes(query))
+      .map(({ wallpaper }) => wallpaper);
   });
 
   async function addWallpaperToSelectedCollection(wallpaper: Wallpaper) {

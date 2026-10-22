@@ -1,5 +1,6 @@
 use serde::Serialize;
 use std::process::Command;
+use windows::core::BOOL;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowTextW, IsWindowVisible};
 
@@ -110,7 +111,7 @@ fn enumerate_desktop_windows() -> Result<Vec<WindowInfo>, String> {
 unsafe extern "system" fn enum_windows_callback(
     hwnd: HWND,
     lparam: windows::Win32::Foundation::LPARAM,
-) -> windows::Win32::Foundation::BOOL {
+) -> BOOL {
     let windows = &mut *(lparam.0 as *mut Vec<WindowInfo>);
 
     let class_name = get_window_class_name(hwnd);
@@ -120,7 +121,7 @@ unsafe extern "system" fn enum_windows_callback(
         && !class_name.contains("WorkerW")
         && !class_name.contains("SHELLDLL_DefView")
     {
-        return windows::Win32::Foundation::BOOL(1);
+        return BOOL(1);
     }
 
     let title = get_window_title(hwnd);
@@ -133,7 +134,7 @@ unsafe extern "system" fn enum_windows_callback(
         visible,
     });
 
-    windows::Win32::Foundation::BOOL(1)
+    BOOL(1)
 }
 
 unsafe fn get_window_class_name(hwnd: HWND) -> String {

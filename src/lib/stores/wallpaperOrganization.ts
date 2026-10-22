@@ -17,7 +17,6 @@ import type {
   StoreActionResult,
   Wallpaper,
 } from "$lib/types/wallpaper";
-import { storeActionFailure } from "$lib/utils/storeTask";
 
 export interface WallpaperOrganizationState {
   collections: Collection[];
@@ -37,7 +36,8 @@ export async function loadOrganizationState(state: WallpaperOrganizationState) {
     state.collections = collections;
     state.collectionMemberships = memberships;
     state.savedFilters = savedFilters;
-  } catch {
+  } catch (e) {
+    console.warn("Failed to load organization data:", e);
     state.collections = [];
     state.collectionMemberships = [];
     state.savedFilters = [];
@@ -52,8 +52,11 @@ export async function createCollectionInState(
     const collection = await createCollectionApi(name);
     state.collections = upsertCollection(state.collections, collection);
     return { ok: true, value: collection };
-  } catch (cause) {
-    return storeActionFailure(state, "Failed to save collection", cause);
+  } catch (e) {
+    const error = `Failed to save collection: ${e}`;
+    state.error = error;
+    console.error(e);
+    return { ok: false, error };
   }
 }
 
@@ -68,8 +71,11 @@ export async function deleteCollectionFromState(
       (item) => item.collection_id !== collection.id,
     );
     return { ok: true, value: undefined };
-  } catch (cause) {
-    return storeActionFailure(state, "Failed to delete collection", cause);
+  } catch (e) {
+    const error = `Failed to delete collection: ${e}`;
+    state.error = error;
+    console.error(e);
+    return { ok: false, error };
   }
 }
 
@@ -100,8 +106,11 @@ export async function setCollectionMembershipInState(
       inCollection,
     );
     return { ok: true, value: updated };
-  } catch (cause) {
-    return storeActionFailure(state, "Failed to update collection", cause);
+  } catch (e) {
+    const error = `Failed to update collection: ${e}`;
+    state.error = error;
+    console.error(e);
+    return { ok: false, error };
   }
 }
 
@@ -115,8 +124,11 @@ export async function saveFilterInState(
     const saved = await saveFilterApi(name, filterType, payload);
     state.savedFilters = upsertSavedFilter(state.savedFilters, saved);
     return { ok: true, value: saved };
-  } catch (cause) {
-    return storeActionFailure(state, "Failed to save filter", cause);
+  } catch (e) {
+    const error = `Failed to save filter: ${e}`;
+    state.error = error;
+    console.error(e);
+    return { ok: false, error };
   }
 }
 
@@ -128,8 +140,11 @@ export async function deleteSavedFilterFromState(
     await deleteSavedFilterApi(filter.id);
     state.savedFilters = state.savedFilters.filter((item) => item.id !== filter.id);
     return { ok: true, value: undefined };
-  } catch (cause) {
-    return storeActionFailure(state, "Failed to delete filter", cause);
+  } catch (e) {
+    const error = `Failed to delete filter: ${e}`;
+    state.error = error;
+    console.error(e);
+    return { ok: false, error };
   }
 }
 

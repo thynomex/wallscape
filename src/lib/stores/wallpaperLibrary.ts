@@ -5,7 +5,7 @@ import {
   searchWallpapers,
 } from "$lib/api/wallpaperApi";
 import { decrementCollectionCounts } from "$lib/stores/wallpaperOrganization";
-import { runStoreTask, storeActionFailure } from "$lib/utils/storeTask";
+import { latestRequest } from "$lib/stores/latestRequest";
 import type {
   Collection,
   CollectionMembership,
@@ -15,6 +15,9 @@ import type {
 
 export interface WallpaperLibraryState {
   wallpapers: Wallpaper[];
+  searchResults: Wallpaper[] | null;
+  searchLoading: boolean;
+  searchError: string | null;
   collections: Collection[];
   collectionMemberships: CollectionMembership[];
   selected: Wallpaper | null;
@@ -25,26 +28,72 @@ export interface WallpaperLibraryState {
   error: string | null;
 }
 
+const beginLoad = latestRequest();
+const beginSearch = latestRequest();
+// Keep late reads from reintroducing an entry deleted during their request.
+const removedIds = new WeakMap<object, Set<number>>();
+
 export async function loadWallpapersIntoState(state: WallpaperLibraryState) {
-  const result = await runStoreTask(state, "Failed to load wallpapers", listWallpapers);
-  setWallpapersInState(state, result.ok ? result.value : []);
+  const isCurrent = beginLoad(state);
+  const libraryAtStart = new Map(state.wallpapers.map((wallpaper) => [wallpaper.id, wallpaper]));
+  state.loading = true;
+  state.error = null;
+  try {
+    const list = await listWallpapers();
+    if (!isCurrent()) return;
+    // Retain records changed or added locally since the read began, while still
+    // accepting newly imported/downloaded records from the response.
+    const changed = new Map(state.wallpapers
+      .filter((wallpaper) => libraryAtStart.get(wallpaper.id) !== wallpaper)
+      .map((wallpaper) => [wallpaper.id, wallpaper]));
+    const merged = list.map((wallpaper) => {
+      const current = changed.get(wallpaper.id) ?? wallpaper;
+      changed.delete(wallpaper.id);
+      return current;
+    });
+    setWallpapersInState(state, withoutRemovedWallpapers(state, [...merged, ...changed.values()]));
+  } catch (e) {
+    if (!isCurrent()) return;
+    const error = `Failed to load wallpapers: ${e}`;
+    state.error = error;
+    console.error(e);
+  } finally {
+    if (isCurrent()) state.loading = false;
+  }
 }
 
 export async function searchWallpapersInState(
   state: WallpaperLibraryState,
   query: string,
 ) {
+  const isCurrent = beginSearch(state);
+  const libraryAtStart = state.wallpapers;
+  state.searchError = null;
   if (!query.trim()) {
-    await loadWallpapersIntoState(state);
+    state.searchResults = null;
+    state.searchLoading = false;
     return;
   }
 
-  const result = await runStoreTask(
-    state,
-    "Failed to search wallpapers",
-    () => searchWallpapers(query),
-  );
-  setWallpapersInState(state, result.ok ? result.value : []);
+  state.searchLoading = true;
+  try {
+    const list = await searchWallpapers(query);
+    if (!isCurrent()) return;
+    const current = new Map(state.wallpapers.map((wallpaper) => [wallpaper.id, wallpaper]));
+    state.searchResults = withoutRemovedWallpapers(state, list)
+      // A refresh may have removed entries since this search began. Only
+      // reconcile this response; absence in a read is not a permanent deletion.
+      .filter((wallpaper) => state.wallpapers === libraryAtStart || current.has(wallpaper.id))
+      .map((wallpaper) => current.get(wallpaper.id) ?? wallpaper);
+  } catch (e) {
+    if (!isCurrent()) return;
+    const error = `Failed to search wallpapers: ${e}`;
+    state.searchError = error;
+    console.error(e);
+    state.searchResults = [];
+  } finally {
+    if (isCurrent()) state.searchLoading = false;
+  }
 }
 
 export async function revealWallpaperInExplorerFromState(
@@ -58,8 +107,11 @@ export async function revealWallpaperInExplorerFromState(
   try {
     await revealWallpaperInExplorer(wallpaper.id);
     return { ok: true, value: undefined };
-  } catch (cause) {
-    return storeActionFailure(state, "Failed to reveal wallpaper", cause);
+  } catch (e) {
+    const error = `Failed to reveal wallpaper: ${e}`;
+    state.error = error;
+    console.error(e);
+    return { ok: false, error };
   }
 }
 
@@ -73,51 +125,38 @@ export async function removeWallpaperFromState(
     return { ok: false, error };
   }
 
+  state.loading = true;
+  state.error = null;
   state.importStatus = `Removing "${wallpaper.title}" from your library...`;
   state.importWarnings = [];
 
-  const result = await runStoreTask(state, "Failed to remove wallpaper", async () => {
+  try {
     const result = await removeWallpaperApi(wallpaper.id);
-    state.wallpapers = state.wallpapers.filter((item) => item.id !== wallpaper.id);
-    const removedCollectionIds = new Set(
-      state.collectionMemberships
-        .filter((item) => item.wallpaper_id === wallpaper.id)
-        .map((item) => item.collection_id),
-    );
-    state.collectionMemberships = state.collectionMemberships.filter(
-      (item) => item.wallpaper_id !== wallpaper.id,
-    );
-    state.collections = decrementCollectionCounts(
-      state.collections,
-      removedCollectionIds,
-    );
-
-    if (state.selected?.id === wallpaper.id) {
-      state.selected = null;
-    }
-
-    if (state.featured?.id === wallpaper.id) {
-      state.featured = state.wallpapers[0] ?? null;
-    }
+    forgetWallpaperInState(state, wallpaper.id);
 
     state.importStatus = `"${wallpaper.title}" removed from the library.`;
-    return result.wallpaper;
-  });
-
-  if (!result.ok) {
+    return { ok: true, value: result.wallpaper };
+  } catch (e) {
+    const error = `Failed to remove wallpaper: ${e}`;
+    state.error = error;
     state.importStatus = null;
+    console.error(e);
+    return { ok: false, error };
+  } finally {
+    state.loading = false;
   }
-
-  return result;
 }
 
 export function replaceWallpaperInState(
-  state: Pick<WallpaperLibraryState, "wallpapers" | "selected" | "featured">,
+  state: Pick<WallpaperLibraryState, "wallpapers" | "searchResults" | "selected" | "featured">,
   updated: Wallpaper,
 ) {
   state.wallpapers = state.wallpapers.map((wallpaper) =>
     wallpaper.id === updated.id ? updated : wallpaper,
   );
+  state.searchResults = state.searchResults?.map((wallpaper) =>
+    wallpaper.id === updated.id ? updated : wallpaper,
+  ) ?? null;
 
   if (state.selected?.id === updated.id) {
     state.selected = updated;
@@ -128,12 +167,50 @@ export function replaceWallpaperInState(
   }
 }
 
+export type WallpaperRemovalState = Pick<
+  WallpaperLibraryState,
+  "wallpapers" | "searchResults" | "collections" | "collectionMemberships" | "selected" | "featured"
+>;
+
+/** Shared by library removal and cancellation after the backend confirms deletion. */
+export function forgetWallpaperInState(state: WallpaperRemovalState, id: number) {
+  const removed = removedIds.get(state) ?? new Set<number>();
+  removed.add(id);
+  removedIds.set(state, removed);
+  state.wallpapers = state.wallpapers.filter((item) => item.id !== id);
+  state.searchResults = state.searchResults?.filter((item) => item.id !== id) ?? null;
+  const collectionIds = new Set(
+    state.collectionMemberships
+      .filter((item) => item.wallpaper_id === id)
+      .map((item) => item.collection_id),
+  );
+  state.collectionMemberships = state.collectionMemberships.filter(
+    (item) => item.wallpaper_id !== id,
+  );
+  state.collections = decrementCollectionCounts(state.collections, collectionIds);
+  if (state.selected?.id === id) state.selected = null;
+  if (state.featured?.id === id) state.featured = state.wallpapers[0] ?? null;
+}
+
+function withoutRemovedWallpapers(state: object, wallpapers: Wallpaper[]) {
+  const removed = removedIds.get(state);
+  return removed ? wallpapers.filter((wallpaper) => !removed.has(wallpaper.id)) : wallpapers;
+}
+
 function setWallpapersInState(
-  state: Pick<WallpaperLibraryState, "wallpapers" | "featured">,
+  state: Pick<WallpaperLibraryState, "wallpapers" | "searchResults" | "selected" | "featured">,
   wallpapers: Wallpaper[],
 ) {
   const featuredId = state.featured?.id;
+  const byId = new Map(wallpapers.map((wallpaper) => [wallpaper.id, wallpaper]));
   state.wallpapers = wallpapers;
+  state.searchResults = state.searchResults?.flatMap((wallpaper) => {
+    const current = byId.get(wallpaper.id);
+    return current ? [current] : [];
+  }) ?? null;
+  if (state.selected && state.selected.id > 0) {
+    state.selected = byId.get(state.selected.id) ?? null;
+  }
   state.featured =
     wallpapers.find((wallpaper) => wallpaper.id === featuredId) ??
     wallpapers[0] ??

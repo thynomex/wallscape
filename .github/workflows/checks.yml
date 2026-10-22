@@ -2,36 +2,57 @@ name: Checks
 
 on:
   push:
-    branches: [main]
+    paths:
+      - "**"
+      - ".github/workflows/checks.yml"
   pull_request:
+    paths:
+      - "**"
+      - ".github/workflows/checks.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  checks:
+  windows:
     runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: .
+        shell: pwsh
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
+          cache-dependency-path: package-lock.json
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Install JavaScript dependencies
-        run: npm ci
-      - name: Install libmpv development files
-        shell: powershell
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run build
+      - name: Install verified libmpv package
         run: npm run setup:mpv
-      - name: Check frontend
-        run: npm run check
-      - name: Build frontend
-        run: npm run build
-      - name: Check Rust formatting
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-      - name: Test Rust
-        run: cargo test --manifest-path src-tauri/Cargo.toml
-      - name: Lint Rust
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Rust format
+        run: cargo fmt --check
+        working-directory: src-tauri
+      - name: Rust tests and TypeScript binding drift
+        run: cargo test --locked
+        working-directory: src-tauri
+      - name: Rust lint
+        run: cargo clippy --locked --all-targets -- -D warnings
+        working-directory: src-tauri

@@ -25,11 +25,12 @@ pub(crate) fn detect_broken_wallpapers(wallpapers: Vec<Wallpaper>) -> Vec<Broken
 fn broken_wallpaper_reason(wallpaper: &Wallpaper) -> Option<String> {
     let path = Path::new(&wallpaper.file_path);
 
-    if !path.exists() {
-        return Some("File is missing".to_string());
-    }
+    let metadata = match path.metadata() {
+        Ok(metadata) => metadata,
+        Err(_) => return Some("File is missing".to_string()),
+    };
 
-    if !path.is_file() {
+    if !metadata.is_file() {
         return Some("Path is not a file".to_string());
     }
 
@@ -116,5 +117,32 @@ mod tests {
         assert!(broken.is_empty());
 
         let _ = fs::remove_file(image_path);
+    }
+
+    #[test]
+    fn reports_directory_as_non_file() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let reason =
+            broken_wallpaper_reason(&wallpaper(directory.path().to_str().unwrap(), "image"));
+
+        assert_eq!(reason.as_deref(), Some("Path is not a file"));
+    }
+
+    #[test]
+    fn reports_existing_file_that_cannot_be_opened() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let directory = tempfile::tempdir().expect("test directory");
+        let path = directory.path().join("locked.jpg");
+        fs::write(&path, b"image").expect("test file");
+        let _exclusive_file = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&path)
+            .expect("exclusive file handle");
+
+        let reason = broken_wallpaper_reason(&wallpaper(path.to_str().unwrap(), "image"))
+            .expect("locked file should be reported");
+        assert!(reason.starts_with("File cannot be opened: "), "{reason}");
     }
 }

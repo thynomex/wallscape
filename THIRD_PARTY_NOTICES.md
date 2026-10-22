@@ -4,9 +4,9 @@ Wallscape is distributed under the MIT License, but it depends on third-party so
 
 ## Bundled video runtime
 
-Release installers include a custom Windows build of [mpv/libmpv](https://github.com/mpv-player/mpv) and its enabled dependencies, including FFmpeg, libplacebo, libass, shaderc, and SPIRV-Cross. mpv and FFmpeg licensing depends on their build configuration. The Wallscape runtime build must be distributed with the applicable upstream license texts and corresponding source information.
+Release 0.2.0 installers include [mpv/libmpv](https://github.com/mpv-player/mpv) from the upstream Windows package `mpv-dev-x86_64-20261005-git-c152964208.7z`, distributed by [mpv-winbuild-cmake release 20261005](https://github.com/shinchiro/mpv-winbuild-cmake/releases/tag/20261005). Its enabled dependencies include FFmpeg and other upstream libraries. The package SHA-256 is `7D9DD506DA6B77E6054F56052F7423D9F7EED764F85154A6221925ABA37DBFB2`. mpv and FFmpeg licensing depends on their build configuration.
 
-The reproducible customization is recorded in `docs/libmpv-slim-mpv-winbuild-cmake.patch`. Release maintainers must verify the exact upstream revisions and include the complete notices/source offer with every binary release.
+The current package provenance, build requirements, and runtime behavior are recorded in `docs/LIBMPV-SLIM-BUILD.md`. The earlier slim-runtime customization remains recorded in `docs/libmpv-slim-mpv-winbuild-cmake.patch` for reference. The runtime must be distributed with the applicable upstream license texts and corresponding source information.
 
 ## Rust and JavaScript dependencies
 

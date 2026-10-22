@@ -10,17 +10,19 @@ import type {
   Wallpaper,
 } from "$lib/types/wallpaper";
 import type { RemoteDownloadStates } from "$lib/types/downloads";
+import { latestRequest } from "$lib/stores/latestRequest";
 import {
-  applyRemoteDownloadProgress,
-  failRemoteDownload,
+  failedRemoteDownloadState,
   formatRemoteDownloadStatus,
   initialRemoteDownloadState,
   isRemoteDownloadActive,
   listenForRemoteDownloadProgress,
+  normalizeDownloadProgress,
   remoteDownloadKey,
 } from "$lib/utils/downloadProgress";
 
 const WALLHAVEN_DOWNLOAD_SOURCE = "wallhaven";
+const beginSearch = latestRequest();
 
 export interface WallpaperWallhavenState {
   wallpapers: Wallpaper[];
@@ -42,17 +44,20 @@ export async function searchWallhavenIntoState(
   state: WallpaperWallhavenState,
   args: WallhavenSearchArgs,
 ) {
+  const isCurrent = beginSearch(state);
   state.wallhavenLoading = true;
   state.wallhavenError = null;
   try {
     const response = await searchWallhavenApi(args);
+    if (!isCurrent()) return;
     state.wallhavenResults = response.data;
     state.wallhavenMeta = response.meta;
   } catch (e) {
+    if (!isCurrent()) return;
     state.wallhavenError = `Failed to search Wallhaven: ${e}`;
     console.error(e);
   } finally {
-    state.wallhavenLoading = false;
+    if (isCurrent()) state.wallhavenLoading = false;
   }
 }
 
@@ -71,14 +76,11 @@ export async function downloadWallhavenIntoState(
     };
   }
 
-  state.remoteDownloads = {
-    ...state.remoteDownloads,
-    [downloadKey]: initialRemoteDownloadState(
-      WALLHAVEN_DOWNLOAD_SOURCE,
-      wallpaper.id,
-      wallpaper.file_size > 0 ? wallpaper.file_size : null,
-    ),
-  };
+  state.remoteDownloads[downloadKey] = initialRemoteDownloadState(
+    WALLHAVEN_DOWNLOAD_SOURCE,
+    wallpaper.id,
+    wallpaper.file_size > 0 ? wallpaper.file_size : null,
+  );
   state.wallhavenError = null;
   state.importStatus = `Downloading Wallhaven ${wallpaper.id}...`;
   state.importWarnings = [];
@@ -90,10 +92,7 @@ export async function downloadWallhavenIntoState(
       unlistenProgress = await listenForRemoteDownloadProgress(
         downloadKey,
         (progress) => {
-          state.remoteDownloads = applyRemoteDownloadProgress(
-            state.remoteDownloads,
-            progress,
-          );
+          state.remoteDownloads[downloadKey] = normalizeDownloadProgress(progress);
           state.importStatus = formatRemoteDownloadStatus(
             state.remoteDownloads[downloadKey],
             `Downloading Wallhaven ${wallpaper.id}...`,
@@ -108,7 +107,7 @@ export async function downloadWallhavenIntoState(
     const completedDownload = state.remoteDownloads[downloadKey];
     const fallbackBytes = Math.max(0, wallpaper.file_size);
 
-    state.remoteDownloads = applyRemoteDownloadProgress(state.remoteDownloads, {
+    state.remoteDownloads[downloadKey] = normalizeDownloadProgress({
       source: WALLHAVEN_DOWNLOAD_SOURCE,
       sourceId: wallpaper.id,
       downloadKey,
@@ -129,8 +128,8 @@ export async function downloadWallhavenIntoState(
     return { ok: true, value: importedFromList };
   } catch (e) {
     const error = `Failed to download Wallhaven wallpaper: ${e}`;
-    state.remoteDownloads = failRemoteDownload(
-      state.remoteDownloads,
+    state.remoteDownloads[downloadKey] = failedRemoteDownloadState(
+      state.remoteDownloads[downloadKey],
       WALLHAVEN_DOWNLOAD_SOURCE,
       wallpaper.id,
       error,

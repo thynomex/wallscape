@@ -31,6 +31,9 @@
     motionBgsQuery = $bindable(""),
     motionBgsCategory = $bindable("latest"),
     wallpapers,
+    searchResults = null,
+    searchLoading = false,
+    searchError = null,
     featured,
     selected,
     loading = false,
@@ -98,6 +101,9 @@
     motionBgsQuery: string;
     motionBgsCategory: string;
     wallpapers: Wallpaper[];
+    searchResults?: Wallpaper[] | null;
+    searchLoading?: boolean;
+    searchError?: string | null;
     featured: Wallpaper | null;
     selected: Wallpaper | null;
     loading?: boolean;
@@ -216,9 +222,10 @@
     {:else if activeView === "explore"}
       <ExploreView
         bind:query={searchQuery}
-        {wallpapers}
+        wallpapers={searchResults ?? wallpapers}
         {selected}
-        {loading}
+        loading={loading || searchLoading}
+        error={searchError}
         {favoriteBusyId}
         savedFilters={localSavedFilters}
         onSearch={onSearch}

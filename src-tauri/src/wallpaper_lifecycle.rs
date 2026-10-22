@@ -94,11 +94,11 @@ pub fn restore_original_wallpaper_blocking(
     runtime: &WallpaperRuntime,
 ) -> Result<String, String> {
     let backup_path = original_wallpaper_backup_path(db)?;
+    set_desktop_wallpaper(&backup_path)
+        .map_err(|e| format!("Failed to restore original wallpaper: {}", e))?;
     runtime
         .stop()
         .map_err(|e| format!("Failed to stop video wallpaper: {}", e))?;
-    set_desktop_wallpaper(&backup_path)
-        .map_err(|e| format!("Failed to restore original wallpaper: {}", e))?;
     assignments::clear(db);
     clear_last_wallpaper(db);
     record_wallpaper_history(db, &backup_path, None, "restore_original");
@@ -133,11 +133,11 @@ pub fn restore_last_wallpaper_on_launch(
     }
 
     if is_static_wallpaper(db, &wallpaper_path)? {
+        set_desktop_wallpaper(&wallpaper_path)
+            .map_err(|e| format!("Failed to restore last wallpaper: {}", e))?;
         runtime
             .stop()
             .map_err(|e| format!("Failed to stop active video wallpaper: {}", e))?;
-        set_desktop_wallpaper(&wallpaper_path)
-            .map_err(|e| format!("Failed to restore last wallpaper: {}", e))?;
     } else {
         runtime
             .set_video_wallpaper_for_target_with_options(
@@ -368,11 +368,11 @@ async fn restore_static_wallpaper(
     let runtime = runtime.clone();
     let action_label = action_label.to_string();
     tokio::task::spawn_blocking(move || {
+        set_desktop_wallpaper(&image_path)
+            .map_err(|e| format!("Failed to {action_label} wallpaper: {}", e))?;
         runtime
             .stop()
             .map_err(|e| format!("Failed to stop active video wallpaper: {}", e))?;
-        set_desktop_wallpaper(&image_path)
-            .map_err(|e| format!("Failed to {action_label} wallpaper: {}", e))?;
         Ok::<_, String>(())
     })
     .await
@@ -386,11 +386,11 @@ async fn set_static_wallpaper_for_monitor(
 ) -> Result<(), String> {
     let runtime = runtime.clone();
     tokio::task::spawn_blocking(move || {
+        set_desktop_wallpaper_for_monitor(&image_path, &monitor_id)
+            .map_err(|e| format!("Failed to set monitor wallpaper: {}", e))?;
         runtime
             .stop_target(WallpaperTarget::Monitor(monitor_id.clone()))
             .map_err(|e| format!("Failed to stop active video wallpaper for monitor: {}", e))?;
-        set_desktop_wallpaper_for_monitor(&image_path, &monitor_id)
-            .map_err(|e| format!("Failed to set monitor wallpaper: {}", e))?;
         Ok::<_, String>(())
     })
     .await
@@ -421,61 +421,59 @@ fn restore_monitor_assignments_on_launch(
         return Ok(false);
     }
 
-    let mut restored_any = false;
-
-    for (monitor_id, wallpaper_path) in assignments {
-        if wallpaper_path.trim().is_empty() || !Path::new(&wallpaper_path).exists() {
-            tracing::warn!(
-                "Skipping monitor wallpaper assignment for '{}'; file is missing: {}",
-                monitor_id,
-                wallpaper_path
-            );
-            continue;
+    restore_assignments_independently(assignments, |monitor_id, wallpaper_path| {
+        if wallpaper_path.trim().is_empty() || !Path::new(wallpaper_path).exists() {
+            return Err(format!("Wallpaper file is unavailable: {}", wallpaper_path));
+        }
+        if !is_supported_wallpaper_path(Path::new(wallpaper_path)) {
+            return Err(format!("Unsupported wallpaper format: {}", wallpaper_path));
         }
 
-        if !is_supported_wallpaper_path(Path::new(&wallpaper_path)) {
-            tracing::warn!(
-                "Skipping monitor wallpaper assignment for '{}'; unsupported format: {}",
-                monitor_id,
-                wallpaper_path
-            );
-            continue;
-        }
-
-        if is_static_wallpaper(db, &wallpaper_path)? {
+        if is_static_wallpaper(db, wallpaper_path)? {
+            set_desktop_wallpaper_for_monitor(wallpaper_path, monitor_id)
+                .map_err(|e| format!("Failed to restore static wallpaper: {}", e))?;
             runtime
-                .stop_target(WallpaperTarget::Monitor(monitor_id.clone()))
-                .map_err(|e| {
-                    format!(
-                        "Failed to stop active video wallpaper for monitor '{}': {}",
-                        monitor_id, e
-                    )
-                })?;
-            set_desktop_wallpaper_for_monitor(&wallpaper_path, &monitor_id).map_err(|e| {
-                format!(
-                    "Failed to restore static wallpaper assignment for monitor '{}': {}",
-                    monitor_id, e
+                .stop_target(WallpaperTarget::Monitor(monitor_id.to_string()))
+                .map_err(|e| format!("Failed to stop active video wallpaper: {}", e))?;
+        } else {
+            runtime
+                .set_video_wallpaper_for_target_with_options(
+                    wallpaper_path.to_string(),
+                    WallpaperTarget::Monitor(monitor_id.to_string()),
+                    playback_options(db),
                 )
-            })?;
-            restored_any = true;
-            continue;
+                .map_err(|e| format!("Failed to restore wallpaper: {}", e))?;
         }
+        Ok(())
+    })
+}
 
-        runtime
-            .set_video_wallpaper_for_target_with_options(
-                wallpaper_path.clone(),
-                WallpaperTarget::Monitor(monitor_id.clone()),
-                playback_options(db),
-            )
-            .map_err(|e| {
-                format!(
-                    "Failed to restore wallpaper assignment for monitor '{}': {}",
-                    monitor_id, e
-                )
-            })?;
-        restored_any = true;
+fn restore_assignments_independently(
+    assignments: BTreeMap<String, String>,
+    mut restore: impl FnMut(&str, &str) -> Result<(), String>,
+) -> Result<bool, String> {
+    let mut restored_any = false;
+    let mut failures = Vec::new();
+    for (monitor_id, wallpaper_path) in assignments {
+        match restore(&monitor_id, &wallpaper_path) {
+            Ok(()) => restored_any = true,
+            Err(error) => {
+                tracing::warn!(
+                    "Skipping wallpaper assignment for '{}': {}",
+                    monitor_id,
+                    error
+                );
+                failures.push(format!("{}: {}", monitor_id, error));
+            }
+        }
     }
-
+    if !restored_any && !failures.is_empty() {
+        // Do not apply a stale monitor's wallpaper globally as a fallback.
+        return Err(format!(
+            "No monitor wallpaper assignments could be restored: {}",
+            failures.join("; ")
+        ));
+    }
     Ok(restored_any)
 }
 
@@ -581,6 +579,42 @@ mod tests {
     use crate::wallpaper_media::is_supported_image_path;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn launch_restore_continues_after_disconnected_or_failed_monitors() {
+        let assignments = BTreeMap::from([
+            ("A-disconnected".into(), "stale.mp4".into()),
+            ("B-connected".into(), "healthy.mp4".into()),
+            ("C-corrupt".into(), "broken.mp4".into()),
+            ("D-connected".into(), "healthy.jpg".into()),
+        ]);
+        let mut attempted = Vec::new();
+        let mut restored = Vec::new();
+        let result = restore_assignments_independently(assignments, |monitor, _| {
+            attempted.push(monitor.to_string());
+            if monitor == "A-disconnected" || monitor == "C-corrupt" {
+                return Err("Monitor unavailable or media failed to start".into());
+            }
+            restored.push(monitor.to_string());
+            Ok(())
+        })
+        .unwrap();
+        assert!(result);
+        assert_eq!(attempted.len(), 4);
+        assert_eq!(restored, vec!["B-connected", "D-connected"]);
+    }
+
+    #[test]
+    fn launch_restore_with_only_stale_assignments_does_not_fall_back_globally() {
+        let assignments = BTreeMap::from([("disconnected".into(), "stale.mp4".into())]);
+        assert!(restore_assignments_independently(assignments, |_, _| Err(
+            "Monitor not found".into()
+        ))
+        .is_err());
+        assert!(
+            !restore_assignments_independently(BTreeMap::new(), |_, _| unreachable!()).unwrap()
+        );
+    }
 
     fn unique_db_path(name: &str) -> PathBuf {
         let stamp = SystemTime::now()

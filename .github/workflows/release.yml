@@ -8,34 +8,48 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
       - name: Install dependencies
         run: npm ci
       - name: Install libmpv development files
-        shell: powershell
         run: npm run setup:mpv
-      - name: Verify project
-        shell: powershell
-        run: |
-          npm run check
-          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-          cargo test --manifest-path src-tauri/Cargo.toml
-          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Check frontend
+        run: npm run check
+      - name: Test frontend
+        run: npm test
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - name: Test Rust and binding drift
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Lint Rust
+        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - name: Build MSI
-        run: npm run tauri build
+        run: npm run tauri build -- --ci -- --locked
       - name: Create checksums
-        shell: powershell
         run: |
           $installers = Get-ChildItem "src-tauri/target/release/bundle/msi/*.msi"
           if (-not $installers) { throw "No MSI installer was produced." }
@@ -44,14 +58,13 @@ jobs:
             "$hash  $($installer.Name)"
           }
           Set-Content -Path SHA256SUMS.txt -Value $lines -Encoding utf8
-      - name: Publish GitHub release
-        shell: powershell
+      - name: Upload draft release assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cmd /c "gh release view ${{ github.ref_name }} --repo ${{ github.repository }} >nul 2>nul"
+          gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" --generate-notes
+            gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" --verify-tag --draft --generate-notes
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
           gh release upload "${{ github.ref_name }}" `

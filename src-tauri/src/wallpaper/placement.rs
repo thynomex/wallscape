@@ -5,7 +5,7 @@ use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 
 pub(super) const ALL_MONITORS_SLOT: &str = "__all__";
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(super) struct PlayerPlacement {
     pub(super) slot: String,
     pub(super) x: i32,

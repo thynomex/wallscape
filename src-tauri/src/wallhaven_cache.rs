@@ -1,26 +1,24 @@
-use std::path::PathBuf;
+use crate::downloads::StagedDownload;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 
-pub(crate) fn store_wallhaven_image(
-    app_handle: &tauri::AppHandle,
+pub(crate) fn store_wallhaven_image<T>(
     source_id: &str,
     extension: &str,
-    bytes: &[u8],
-) -> Result<PathBuf, String> {
-    let cache_dir = app_handle
+    download: StagedDownload,
+    register: impl FnOnce(&Path) -> Result<T, String>,
+) -> Result<T, String> {
+    let source_id = wallhaven_source_id(source_id)?;
+    let ext = wallhaven_image_extension(extension)?;
+    download.commit(&source_id, ext, register)
+}
+
+pub(crate) fn wallhaven_cache_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(app_handle
         .path()
         .app_data_dir()
         .map_err(|e| format!("Failed to resolve Wallhaven cache directory: {}", e))?
-        .join("wallhaven");
-
-    std::fs::create_dir_all(&cache_dir)
-        .map_err(|e| format!("Failed to create Wallhaven cache directory: {}", e))?;
-
-    let source_id = wallhaven_source_id(source_id)?;
-    let ext = wallhaven_image_extension(extension)?;
-    let path = cache_dir.join(format!("{source_id}.{ext}"));
-    std::fs::write(&path, bytes).map_err(|e| format!("Failed to save Wallhaven image: {}", e))?;
-    Ok(path)
+        .join("wallhaven"))
 }
 
 fn wallhaven_source_id(source_id: &str) -> Result<String, String> {

@@ -123,6 +123,21 @@ impl Database {
         wallpapers::add(&self.conn, wallpaper, file_path, current_unix_timestamp())
     }
 
+    /// Keep registration atomic with reading the DTO returned to the caller.
+    /// A failed read must not leave a row pointing at a rolled-back cache file.
+    pub fn add_wallpaper_and_get(
+        &self,
+        wallpaper: &WallpaperMetadata,
+        file_path: &str,
+    ) -> Result<Wallpaper> {
+        let transaction = self.conn.unchecked_transaction()?;
+        let id = wallpapers::add(&transaction, wallpaper, file_path, current_unix_timestamp())?;
+        let saved =
+            wallpapers::get(&transaction, id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+        transaction.commit()?;
+        Ok(saved)
+    }
+
     pub fn get_wallpaper(&self, id: i64) -> Result<Option<Wallpaper>> {
         wallpapers::get(&self.conn, id)
     }
@@ -344,6 +359,25 @@ mod tests {
     }
 
     #[test]
+    fn downloaded_wallpaper_registration_rolls_back_on_read_failure() -> Result<()> {
+        let directory = tempfile::tempdir().unwrap();
+        let db = Database::new(directory.path().join("test.db"))?;
+        // Simulate a row that cannot deserialize after a successful INSERT.
+        db.conn.execute_batch("CREATE TRIGGER invalid_download_width AFTER INSERT ON wallpapers BEGIN UPDATE wallpapers SET width = 'invalid' WHERE id = NEW.id; END;")?;
+        let metadata = sample_metadata("Download", None, vec![]);
+        assert!(db
+            .add_wallpaper_and_get(&metadata, "/download.jpg")
+            .is_err());
+        assert!(db.list_wallpapers()?.is_empty());
+        db.conn
+            .execute_batch("DROP TRIGGER invalid_download_width")?;
+        let wallpaper = db.add_wallpaper_and_get(&metadata, "/download.jpg")?;
+        assert_eq!(wallpaper.title, "Download");
+        assert_eq!(db.list_wallpapers()?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn search_and_preferences_round_trip() -> Result<()> {
         let db_path = unique_db_path("search");
         let db = Database::new(&db_path)?;
@@ -489,6 +523,29 @@ mod tests {
     }
 
     #[test]
+    fn wallpaper_history_suppresses_only_consecutive_same_target_duplicates() -> Result<()> {
+        let db_path = unique_db_path("history-duplicates");
+        let db = Database::new(&db_path)?;
+        let first = db.wallpaper_history_record("C:/wallpapers/forest.mp4", None, "manual")?;
+        let first_id = db.add_wallpaper_history(&first)?;
+        let duplicate =
+            db.wallpaper_history_record("C:/wallpapers/forest.mp4", None, "rotation")?;
+        assert_eq!(db.add_wallpaper_history(&duplicate)?, first_id);
+        assert_eq!(db.list_wallpaper_history(10)?.len(), 1);
+
+        let other_target =
+            db.wallpaper_history_record("C:/wallpapers/forest.mp4", Some("monitor-1"), "manual")?;
+        assert_ne!(db.add_wallpaper_history(&other_target)?, first_id);
+        let other_path = db.wallpaper_history_record("C:/wallpapers/city.mp4", None, "manual")?;
+        db.add_wallpaper_history(&other_path)?;
+        db.add_wallpaper_history(&first)?;
+        assert_eq!(db.list_wallpaper_history(10)?.len(), 4);
+        drop(db);
+        let _ = fs::remove_file(&db_path);
+        Ok(())
+    }
+
+    #[test]
     fn wallpaper_history_records_and_finds_previous_distinct_entry() -> Result<()> {
         let db_path = unique_db_path("history");
         let db = Database::new(&db_path)?;
@@ -515,40 +572,6 @@ mod tests {
             .expect("previous history entry should exist");
         assert_eq!(previous.file_path, "/tmp/forest-loop.mp4");
         assert_eq!(previous.thumbnail_path.as_deref(), Some("forest-thumb.jpg"));
-
-        drop(db);
-        let _ = fs::remove_file(&db_path);
-        Ok(())
-    }
-
-    #[test]
-    fn wallpaper_history_skips_consecutive_duplicates_for_same_path_and_target() -> Result<()> {
-        let db_path = unique_db_path("history-dedup");
-        let db = Database::new(&db_path)?;
-
-        let first_record = db.wallpaper_history_record("/tmp/forest-loop.mp4", None, "manual")?;
-        db.add_wallpaper_history(&first_record)?;
-
-        for _ in 0..60 {
-            let duplicate_record =
-                db.wallpaper_history_record("/tmp/city-loop.mp4", Some("monitor-1"), "rotation")?;
-            db.add_wallpaper_history(&duplicate_record)?;
-        }
-
-        let entries = db.list_wallpaper_history(100)?;
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].file_path, "/tmp/city-loop.mp4");
-        assert_eq!(entries[0].target_monitor_id.as_deref(), Some("monitor-1"));
-
-        let previous = db
-            .latest_distinct_wallpaper_history(Some("/tmp/city-loop.mp4"))?
-            .expect("previous history entry should remain visible");
-        assert_eq!(previous.file_path, "/tmp/forest-loop.mp4");
-
-        let other_target_record =
-            db.wallpaper_history_record("/tmp/city-loop.mp4", Some("monitor-2"), "manual")?;
-        db.add_wallpaper_history(&other_target_record)?;
-        assert_eq!(db.list_wallpaper_history(100)?.len(), 3);
 
         drop(db);
         let _ = fs::remove_file(&db_path);

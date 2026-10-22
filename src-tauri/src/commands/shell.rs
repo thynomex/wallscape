@@ -2,7 +2,6 @@ use std::path::Path;
 
 use crate::windows_util::encode_wide;
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
@@ -33,7 +32,7 @@ fn shell_execute(
 
     let result = unsafe {
         ShellExecuteW(
-            HWND(std::ptr::null_mut()),
+            None,
             PCWSTR::from_raw(open.as_ptr()),
             PCWSTR::from_raw(target.as_ptr()),
             parameters,

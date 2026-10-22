@@ -8,6 +8,7 @@ import {
   setWallpaper,
   undoWallpaperHistory,
 } from "$lib/api/wallpaperApi";
+import { forgetWallpaperInState, type WallpaperRemovalState } from "$lib/stores/wallpaperLibrary";
 import type {
   StoreActionResult,
   Wallpaper,
@@ -16,10 +17,7 @@ import type {
   WallpaperRestoreStatus,
 } from "$lib/types/wallpaper";
 
-export interface WallpaperLifecycleState {
-  wallpapers: Wallpaper[];
-  selected: Wallpaper | null;
-  featured: Wallpaper | null;
+export interface WallpaperLifecycleState extends WallpaperRemovalState {
   backup: WallpaperBackupStatus;
   previous: WallpaperRestoreStatus;
   history: WallpaperHistoryEntry[];
@@ -115,30 +113,30 @@ export async function cancelAppliedWallpaperInState(
         ? fallbackWallpaper
         : null;
   const previousPath = state.previous.path;
+  const replaceFeatured = state.featured?.id === canceledWallpaper?.id || !state.featured;
 
   try {
     await restorePreviousWallpaper();
-
-    if (canceledWallpaper && canceledWallpaper.file_path !== previousPath) {
-      await removeWallpaperApi(canceledWallpaper.id);
-      state.wallpapers = state.wallpapers.filter(
-        (wallpaper) => wallpaper.id !== canceledWallpaper.id,
-      );
-    }
-
-    await loadPreviousWallpaperStatusIntoState(state);
-    await loadWallpaperHistoryIntoState(state);
 
     const restoredWallpaper = previousPath
       ? state.wallpapers.find((wallpaper) => wallpaper.file_path === previousPath) ?? null
       : null;
     state.selected = restoredWallpaper;
+    await loadPreviousWallpaperStatusIntoState(state);
+    await loadWallpaperHistoryIntoState(state);
 
-    if (state.featured?.id === canceledWallpaper?.id || !state.featured) {
+    let removed = false;
+    if (canceledWallpaper && canceledWallpaper.file_path !== previousPath) {
+      await removeWallpaperApi(canceledWallpaper.id);
+      forgetWallpaperInState(state, canceledWallpaper.id);
+      removed = true;
+    }
+
+    if (replaceFeatured) {
       state.featured = restoredWallpaper ?? state.wallpapers[0] ?? null;
     }
 
-    state.importStatus = canceledWallpaper
+    state.importStatus = removed && canceledWallpaper
       ? `"${canceledWallpaper.title}" canceled and removed from your library.`
       : "Previous wallpaper restored.";
     return { ok: true, value: undefined };

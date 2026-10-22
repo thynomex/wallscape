@@ -1,4 +1,4 @@
-use crate::downloads::ByteDownloadProgress;
+use crate::downloads::{stream_download, ByteDownloadProgress, StagedDownload};
 use reqwest::header::CONTENT_TYPE;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
@@ -14,6 +14,7 @@ const WALLHAVEN_MIN_REQUEST_INTERVAL: Duration = Duration::from_millis(1_350);
 pub const WALLHAVEN_SOURCE_NAME: &str = "wallhaven";
 
 static WALLHAVEN_NEXT_REQUEST_AT: OnceLock<Mutex<Instant>> = OnceLock::new();
+static WALLHAVEN_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -96,7 +97,7 @@ struct ApiMeta {
 
 #[derive(Debug)]
 pub struct DownloadedImage {
-    pub bytes: Vec<u8>,
+    pub file: StagedDownload,
     pub extension: &'static str,
 }
 
@@ -106,11 +107,16 @@ pub struct WallhavenClient {
 
 impl WallhavenClient {
     pub fn new() -> Result<Self, String> {
+        if let Some(http) = WALLHAVEN_HTTP_CLIENT.get() {
+            return Ok(Self { http: http.clone() });
+        }
+
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .timeout(Duration::from_secs(20))
             .build()
             .map_err(|e| format!("Failed to create Wallhaven client: {}", e))?;
+        let http = WALLHAVEN_HTTP_CLIENT.get_or_init(|| http).clone();
 
         Ok(Self { http })
     }
@@ -191,7 +197,8 @@ impl WallhavenClient {
     pub async fn download_image_with_progress<F>(
         &self,
         url: &str,
-        mut on_progress: F,
+        cache_dir: &std::path::Path,
+        on_progress: F,
     ) -> Result<DownloadedImage, String>
     where
         F: FnMut(ByteDownloadProgress),
@@ -202,7 +209,7 @@ impl WallhavenClient {
 
         wait_for_wallhaven_request_slot().await;
 
-        let mut response = self
+        let response = self
             .http
             .get(url)
             .send()
@@ -234,37 +241,16 @@ impl WallhavenClient {
             .or_else(|| extension_from_url(url))
             .ok_or_else(|| "Wallhaven returned an unsupported image format".to_string())?;
 
-        let mut received_bytes = 0_u64;
-        let mut bytes =
-            Vec::with_capacity(total_bytes.unwrap_or(0).min(MAX_DOWNLOAD_BYTES) as usize);
-        on_progress(ByteDownloadProgress {
-            received_bytes,
-            total_bytes,
-        });
+        let file = stream_download(
+            response,
+            cache_dir,
+            MAX_DOWNLOAD_BYTES,
+            "Wallhaven",
+            on_progress,
+        )
+        .await?;
 
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|e| format!("Failed to read Wallhaven image: {}", e))?
-        {
-            received_bytes += chunk.len() as u64;
-
-            if received_bytes > MAX_DOWNLOAD_BYTES {
-                return Err("Wallhaven image is too large to download".to_string());
-            }
-
-            bytes.extend_from_slice(&chunk);
-            on_progress(ByteDownloadProgress {
-                received_bytes,
-                total_bytes,
-            });
-        }
-
-        if bytes.len() as u64 > MAX_DOWNLOAD_BYTES {
-            return Err("Wallhaven image is too large to download".to_string());
-        }
-
-        Ok(DownloadedImage { bytes, extension })
+        Ok(DownloadedImage { file, extension })
     }
 }
 
@@ -373,5 +359,19 @@ fn extension_from_url(url: &str) -> Option<&'static str> {
         Some("png")
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn wallhaven_clients_reuse_http_connections() {
+        crate::downloads::progress_tests::assert_client_connection_reuse(
+            || WallhavenClient::new().unwrap().http,
+            USER_AGENT,
+        )
+        .await;
     }
 }

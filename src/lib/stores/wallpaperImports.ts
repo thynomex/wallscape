@@ -6,7 +6,6 @@ import {
   scanImportPaths,
 } from "$lib/api/wallpaperApi";
 import { formatBatchImportMessage } from "$lib/utils/importSummary";
-import { runStoreTask, storeActionFailure } from "$lib/utils/storeTask";
 import type {
   BatchImportItem,
   BatchImportResult,
@@ -42,31 +41,36 @@ export async function importWallpaperIntoState(
   probe: ImportProbe | undefined,
   actions: WallpaperReloadAction,
 ): Promise<StoreActionResult<Wallpaper>> {
+  state.loading = true;
   state.importing = true;
   state.importStatus = "Saving video to library...";
   state.importWarnings = [];
+  state.error = null;
+
   try {
-    const result = await runStoreTask(state, "Failed to import wallpaper", async () => {
-      const imported = await importWallpaperApi(videoPath, probe);
+    const result = await importWallpaperApi(videoPath, probe);
 
-      await actions.reloadWallpapers();
-      state.importWarnings = imported.warnings;
-      const importedFromList =
-        state.wallpapers.find((wallpaper) => wallpaper.id === imported.wallpaper.id) ??
-        imported.wallpaper;
+    await actions.reloadWallpapers();
+    state.importWarnings = result.warnings;
+    const importedFromList =
+      state.wallpapers.find((wallpaper) => wallpaper.id === result.wallpaper.id) ??
+      result.wallpaper;
 
-      state.featured = importedFromList;
-      state.importStatus = imported.warnings.length
-        ? imported.duplicate
-          ? "Skipped duplicate import."
-          : "Imported with notes."
-        : "Imported successfully.";
-      return importedFromList;
-    });
-
-    if (!result.ok) state.importStatus = null;
-    return result;
+    state.featured = importedFromList;
+    state.importStatus = result.warnings.length
+      ? result.duplicate
+        ? "Skipped duplicate import."
+        : "Imported with notes."
+      : "Imported successfully.";
+    return { ok: true, value: importedFromList };
+  } catch (e) {
+    const error = `Failed to import wallpaper: ${e}`;
+    state.error = error;
+    state.importStatus = null;
+    console.error(e);
+    return { ok: false, error };
   } finally {
+    state.loading = false;
     state.importing = false;
   }
 }
@@ -80,31 +84,37 @@ export async function importWallpapersIntoState(
   items: BatchImportItem[],
   actions: WallpaperReloadAction,
 ): Promise<StoreActionResult<BatchImportResult>> {
+  state.loading = true;
   state.importing = true;
   state.importStatus = `Importing ${items.length} wallpaper${items.length === 1 ? "" : "s"}...`;
   state.importWarnings = [];
+  state.error = null;
+
   try {
-    const result = await runStoreTask(state, "Failed to import wallpapers", async () => {
-      const imported = await importWallpapersApi(items);
-      await actions.reloadWallpapers();
+    const result = await importWallpapersApi(items);
+    await actions.reloadWallpapers();
 
-      state.importWarnings = [
-        ...imported.warnings,
-        ...imported.failed.map((failure) => `${failure.path}: ${failure.reason}`),
-      ];
-      state.featured =
-        imported.imported[0] ??
-        imported.duplicates[0] ??
-        state.featured ??
-        state.wallpapers[0] ??
-        null;
-      state.importStatus = formatBatchImportMessage(imported, { suffix: "." });
-      return imported;
-    });
+    state.importWarnings = [
+      ...result.warnings,
+      ...result.failed.map((failure) => `${failure.path}: ${failure.reason}`),
+    ];
+    state.featured =
+      result.imported[0] ??
+      result.duplicates[0] ??
+      state.featured ??
+      state.wallpapers[0] ??
+      null;
+    state.importStatus = formatBatchImportMessage(result, { suffix: "." });
 
-    if (!result.ok) state.importStatus = null;
-    return result;
+    return { ok: true, value: result };
+  } catch (e) {
+    const error = `Failed to import wallpapers: ${e}`;
+    state.error = error;
+    state.importStatus = null;
+    console.error(e);
+    return { ok: false, error };
   } finally {
+    state.loading = false;
     state.importing = false;
   }
 }
@@ -112,10 +122,12 @@ export async function importWallpapersIntoState(
 export async function detectBrokenWallpapersInState(
   state: WallpaperImportState,
 ): Promise<StoreActionResult<BrokenWallpaper[]>> {
+  state.loading = true;
+  state.error = null;
   state.importStatus = "Checking library files...";
   state.importWarnings = [];
 
-  const result = await runStoreTask(state, "Failed to check library files", async () => {
+  try {
     const broken = await detectBrokenWallpapers();
     state.importStatus = broken.length
       ? `${broken.length} broken library entr${broken.length === 1 ? "y" : "ies"} found.`
@@ -123,14 +135,16 @@ export async function detectBrokenWallpapersInState(
     state.importWarnings = broken
       .slice(0, 8)
       .map((item) => `${item.wallpaper.title}: ${item.reason}`);
-    return broken;
-  });
-
-  if (!result.ok) {
+    return { ok: true, value: broken };
+  } catch (e) {
+    const error = `Failed to check library files: ${e}`;
+    state.error = error;
     state.importStatus = null;
+    console.error(e);
+    return { ok: false, error };
+  } finally {
+    state.loading = false;
   }
-
-  return result;
 }
 
 export async function regenerateThumbnailInState(
@@ -155,8 +169,11 @@ export async function regenerateThumbnailInState(
     state.importWarnings = result.warnings;
     state.importStatus = `"${result.wallpaper.title}" thumbnail refreshed.`;
     return { ok: true, value: result };
-  } catch (cause) {
+  } catch (e) {
+    const error = `Failed to regenerate thumbnail: ${e}`;
+    state.error = error;
     state.importStatus = null;
-    return storeActionFailure(state, "Failed to regenerate thumbnail", cause);
+    console.error(e);
+    return { ok: false, error };
   }
 }

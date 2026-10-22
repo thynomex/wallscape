@@ -1,26 +1,24 @@
-use std::path::PathBuf;
+use crate::downloads::StagedDownload;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 
-pub(crate) fn store_motionbgs_video(
-    app_handle: &tauri::AppHandle,
+pub(crate) fn store_motionbgs_video<T>(
     source_id: &str,
     extension: &str,
-    bytes: &[u8],
-) -> Result<PathBuf, String> {
-    let cache_dir = app_handle
+    download: StagedDownload,
+    register: impl FnOnce(&Path) -> Result<T, String>,
+) -> Result<T, String> {
+    let source_id = motionbgs_source_id(source_id)?;
+    let ext = motionbgs_video_extension(extension)?;
+    download.commit(&source_id, ext, register)
+}
+
+pub(crate) fn motionbgs_cache_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(app_handle
         .path()
         .app_data_dir()
         .map_err(|e| format!("Failed to resolve MotionBGS cache directory: {}", e))?
-        .join("motionbgs");
-
-    std::fs::create_dir_all(&cache_dir)
-        .map_err(|e| format!("Failed to create MotionBGS cache directory: {}", e))?;
-
-    let source_id = motionbgs_source_id(source_id)?;
-    let ext = motionbgs_video_extension(extension)?;
-    let path = cache_dir.join(format!("{source_id}.{ext}"));
-    std::fs::write(&path, bytes).map_err(|e| format!("Failed to save MotionBGS video: {}", e))?;
-    Ok(path)
+        .join("motionbgs"))
 }
 
 fn motionbgs_source_id(source_id: &str) -> Result<String, String> {

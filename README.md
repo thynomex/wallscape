@@ -37,6 +37,7 @@ Prerequisites:
 - Rust stable with the MSVC toolchain
 - Visual Studio Build Tools with Desktop development with C++
 - WebView2 Runtime
+- 7-Zip or NanaZip for extracting the pinned libmpv package
 
 ```powershell
 npm install
@@ -57,6 +58,7 @@ Build output is written under `src-tauri/target/release/bundle/msi/`.
 
 ```powershell
 npm run check
+npm test
 npm run build
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 cargo test --manifest-path src-tauri/Cargo.toml
@@ -64,6 +66,8 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
 ```
 
 See [Development](docs/DEVELOPMENT.md), [Architecture](docs/ARCHITECTURE.md), and [Troubleshooting](docs/TROUBLESHOOTING.md).
+
+Release 0.2.0 includes a libmpv runtime with the frame filters needed for FPS limiting. This makes the installer larger than releases that used the slim runtime. See [runtime build notes](docs/LIBMPV-SLIM-BUILD.md).
 
 ## Contributing and support
 

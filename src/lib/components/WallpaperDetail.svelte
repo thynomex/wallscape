@@ -1,10 +1,13 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import {
     openExternalUrl,
     setWallpaperFitMode,
-    setWallpaperPaused,
     setWallpaperSpeed,
   } from "$lib/api/wallpaperApi";
+  import { settingsStore } from "$lib/stores/settings.svelte";
+  import { PlaybackStore } from "$lib/stores/playback.svelte";
+  import { toastStore } from "$lib/stores/toasts.svelte";
   import type { Monitor, Wallpaper } from "$lib/types/wallpaper";
   import Icon from "./Icon.svelte";
   import WallpaperPreviewMedia from "./WallpaperPreviewMedia.svelte";
@@ -64,19 +67,29 @@
   );
 
   // Playback controls state
-  type FitMode = "fit" | "fill" | "stretch";
-  let isPaused = $state(false);
-  let playbackSpeed = $state(1.0);
+  const playback = new PlaybackStore();
+  let isPaused = $derived(playback.status.paused);
+  let playbackSpeed = $derived(playback.status.active
+    ? playback.status.playbackSpeed : settingsStore.settings.defaultPlaybackSpeed);
   let speedMenuOpen = $state(false);
-  let fitMode = $state<FitMode>("fit");
+  let fitMode = $derived(playback.status.active
+    ? playback.status.fitMode : settingsStore.settings.defaultFitMode);
   const speedOptions = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+
+  onMount(() => {
+    void playback.refresh();
+    const interval = window.setInterval(() => void playback.refresh(), 2000);
+    return () => window.clearInterval(interval);
+  });
 
   const fitModeIcon = $derived(
     fitMode === "fit" ? "maximize-2" : fitMode === "fill" ? "maximize" : "move",
   );
 
   const fitModeLabel = $derived(
-    fitMode === "fit"
+    fitMode === null
+      ? "Mixed across displays"
+      : fitMode === "fit"
       ? "Fit (letterbox)"
       : fitMode === "fill"
         ? "Fill (crop edges)"
@@ -106,24 +119,17 @@
   }
 
   async function togglePause() {
-    const newPausedState = !isPaused;
-    isPaused = newPausedState;
-
-    try {
-      await setWallpaperPaused(newPausedState);
-    } catch (error) {
-      isPaused = !newPausedState;
-      console.error("Failed to toggle pause:", error);
-    }
+    if (applying || playback.busy) return;
+    const result = await playback.toggle();
+    if (!result.ok) toastStore.error(result.error);
   }
 
   async function setPlaybackSpeed(speed: number) {
-    playbackSpeed = speed;
-    try {
-      await setWallpaperSpeed(speed);
-    } catch (error) {
-      console.error("Failed to set playback speed:", error);
-    }
+    const result = await settingsStore.update(
+      { defaultPlaybackSpeed: speed },
+      (settings) => playback.update(() => setWallpaperSpeed(settings.defaultPlaybackSpeed)),
+    );
+    if (!result.ok) toastStore.error(result.error);
   }
 
   async function choosePlaybackSpeed(speed: number) {
@@ -131,21 +137,21 @@
     await setPlaybackSpeed(speed);
   }
 
-  function speedLabel(speed: number) {
+  function speedLabel(speed: number | null) {
+    if (speed === null) return "Mixed";
     return `${Number.isInteger(speed) ? speed.toFixed(0) : speed}×`;
   }
 
   async function cycleFitMode() {
-    const modes: FitMode[] = ["fit", "fill", "stretch"];
-    const currentIndex = modes.indexOf(fitMode);
+    const modes = ["fit", "fill", "stretch"];
+    const currentIndex = fitMode === null ? -1 : modes.indexOf(fitMode);
     const nextMode = modes[(currentIndex + 1) % modes.length];
 
-    fitMode = nextMode;
-    try {
-      await setWallpaperFitMode(nextMode);
-    } catch (error) {
-      console.error("Failed to set fit mode:", error);
-    }
+    const result = await settingsStore.update(
+      { defaultFitMode: nextMode },
+      (settings) => playback.update(() => setWallpaperFitMode(settings.defaultFitMode)),
+    );
+    if (!result.ok) toastStore.error(result.error);
   }
 </script>
 
@@ -218,7 +224,7 @@
           class:playing={!isPaused}
           aria-label={isPaused ? "Resume playback" : "Pause playback"}
           aria-pressed={!isPaused}
-          disabled={applying}
+          disabled={applying || playback.busy}
           onclick={togglePause}
         >
           <Icon name={isPaused ? "play" : "pause"} size={18} />
@@ -231,7 +237,7 @@
             aria-label="Playback speed"
             aria-haspopup="menu"
             aria-expanded={speedMenuOpen}
-            disabled={applying}
+            disabled={applying || playback.busy}
             onclick={(event) => {
               event.stopPropagation();
               speedMenuOpen = !speedMenuOpen;
@@ -252,6 +258,7 @@
                   role="menuitemradio"
                   aria-checked={playbackSpeed === speed}
                   class:active={playbackSpeed === speed}
+                  disabled={applying || playback.busy}
                   onclick={(event) => {
                     event.stopPropagation();
                     choosePlaybackSpeed(speed);
@@ -268,7 +275,7 @@
           class="fit-mode-btn"
           aria-label="Fit mode: {fitModeLabel}"
           title={fitModeLabel}
-          disabled={applying}
+          disabled={applying || playback.busy}
           onclick={cycleFitMode}
         >
           <Icon name={fitModeIcon} size={18} />

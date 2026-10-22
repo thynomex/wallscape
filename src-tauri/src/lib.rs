@@ -6,6 +6,7 @@ mod commands;
 mod db;
 mod downloads;
 mod importing;
+mod logging;
 mod motionbgs;
 mod motionbgs_cache;
 mod settings;
@@ -21,25 +22,21 @@ use anyhow::anyhow;
 use db::Database;
 use parking_lot::Mutex;
 use settings::{Settings, SettingsState};
-use std::sync::OnceLock;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{Manager, WindowEvent};
+use tauri::{Emitter, Manager, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_single_instance::init as single_instance_init;
-use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::EnvFilter;
 use wallpaper::WallpaperRuntime;
 
 /// Label of the single application window (see `tauri.conf.json`).
 const MAIN_WINDOW_LABEL: &str = "main";
-static LOG_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 
 pub struct AppDatabase(pub Mutex<Database>);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    init_logging();
+    logging::init();
 
     tauri::Builder::default()
         .plugin(single_instance_init(|app, _args, _cwd| {
@@ -57,6 +54,14 @@ pub fn run() {
 
             let database =
                 app_data_migration::open_database(app.handle()).map_err(|error| anyhow!(error))?;
+            match storage::cleanup_abandoned_downloads(app.handle()) {
+                Ok(result) => {
+                    for warning in result.warnings {
+                        tracing::warn!("{}", warning);
+                    }
+                }
+                Err(error) => tracing::warn!("Failed to clean abandoned downloads: {}", error),
+            }
             let settings = Settings::load(&database);
             if let Err(error) = wallpaper_lifecycle::backup_original_wallpaper_if_absent(&database)
             {
@@ -69,12 +74,10 @@ pub fn run() {
                 app.state::<WallpaperRuntime>().inner().clone(),
             );
 
-            // Only touch OS autostart registration at launch when the user has
-            // explicitly enabled it. Disabling happens when the setting changes.
-            if settings.launch_at_startup {
-                if let Err(error) = commands::sync_autostart(app.handle(), true) {
-                    tracing::warn!("{}", error);
-                }
+            // Reconcile saved intent after interrupted updates or failed rollback.
+            // Refresh enabled registrations in case the executable moved.
+            if let Err(error) = commands::sync_autostart(app.handle(), settings.launch_at_startup) {
+                tracing::warn!("{}", error);
             }
 
             // The window is created hidden (visible:false in tauri.conf.json) so
@@ -85,6 +88,7 @@ pub fn run() {
                 } else {
                     let _ = window.show();
                     let _ = window.set_focus();
+                    emit_main_window_visibility(app.handle());
                 }
             }
 
@@ -107,7 +111,17 @@ pub fn run() {
                 if should_close_to_tray(window.app_handle()) {
                     api.prevent_close();
                     let _ = window.hide();
+                    emit_main_window_visibility(window.app_handle());
                 }
+            }
+
+            // On Windows, WM_SIZE covers minimizing and restoring as well as
+            // resizing. Focus changes are only a cue to read visibility; an
+            // unfocused window can still be visible.
+            if window.label() == MAIN_WINDOW_LABEL
+                && matches!(event, WindowEvent::Resized(_) | WindowEvent::Focused(_))
+            {
+                emit_main_window_visibility(window.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -157,34 +171,6 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}
-
-fn init_logging() {
-    let log_dir = std::env::var_os("LOCALAPPDATA")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("Wallscape")
-        .join("logs");
-
-    if let Err(error) = std::fs::create_dir_all(&log_dir) {
-        eprintln!("Failed to create Wallscape log directory: {error}");
-    }
-
-    let file_appender = tracing_appender::rolling::never(log_dir, "wallscape.log");
-    let (writer, guard) = tracing_appender::non_blocking(file_appender);
-    let _ = LOG_GUARD.set(guard);
-
-    #[cfg(debug_assertions)]
-    let log_filter = EnvFilter::new("debug");
-
-    #[cfg(not(debug_assertions))]
-    let log_filter = EnvFilter::new("wallscape_win_lib=debug");
-
-    tracing_subscriber::fmt()
-        .with_writer(writer)
-        .with_ansi(false)
-        .with_env_filter(log_filter)
-        .init();
 }
 
 /// Build the system tray icon and its context menu.
@@ -297,6 +283,7 @@ fn show_main_window(app: &tauri::AppHandle) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+        emit_main_window_visibility(app);
     }
 }
 
@@ -313,6 +300,24 @@ fn toggle_main_window(app: &tauri::AppHandle) {
             let _ = window.unminimize();
             let _ = window.set_focus();
         }
+        // Hiding an already blurred window need not produce a focus event.
+        emit_main_window_visibility(app);
+    }
+}
+
+fn emit_main_window_visibility(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
+        return;
+    };
+    let (Ok(visible), Ok(minimized)) = (window.is_visible(), window.is_minimized()) else {
+        return;
+    };
+    if let Err(error) = window.emit_to(
+        MAIN_WINDOW_LABEL,
+        "app-window-visibility",
+        visible && !minimized,
+    ) {
+        tracing::warn!("Failed to emit window visibility: {}", error);
     }
 }
 

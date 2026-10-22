@@ -9,6 +9,14 @@ fn main() {
         "cargo:rerun-if-changed={}",
         project_root
             .join(".vendor")
+            .join("mpv-dev-filters")
+            .join("libmpv-2.dll")
+            .display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        project_root
+            .join(".vendor")
             .join("mpv-dev")
             .join("libmpv-2.dll")
             .display()
@@ -36,6 +44,11 @@ fn project_root() -> std::path::PathBuf {
 fn resolve_mpv_dir(project_root: &std::path::Path) -> std::path::PathBuf {
     if let Ok(mpv_dir) = std::env::var("MPV_DEV_DIR") {
         return std::path::PathBuf::from(mpv_dir);
+    }
+
+    let filter_mpv_dir = project_root.join(".vendor").join("mpv-dev-filters");
+    if filter_mpv_dir.join("libmpv-2.dll").is_file() {
+        return filter_mpv_dir;
     }
 
     let vendored_mpv_dir = project_root.join(".vendor").join("mpv-dev");

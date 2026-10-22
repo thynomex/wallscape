@@ -15,6 +15,7 @@
     wallpapers,
     selected,
     loading,
+    error = null,
     favoriteBusyId = null,
     savedFilters = [],
     onSearch,
@@ -28,6 +29,7 @@
     wallpapers: Wallpaper[];
     selected: Wallpaper | null;
     loading: boolean;
+    error?: string | null;
     favoriteBusyId?: number | null;
     savedFilters?: SavedFilter[];
     onSearch: () => void;
@@ -79,6 +81,8 @@
 
   {#if loading}
     <LoadingGrid />
+  {:else if error}
+    <EmptyState message={error} />
   {:else if wallpapers.length === 0}
     <EmptyState message="No matches found." />
   {:else}

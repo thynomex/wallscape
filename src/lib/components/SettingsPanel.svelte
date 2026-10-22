@@ -120,8 +120,8 @@
         },
         {
           key: "autoPauseOccluded",
-          title: "Covered desktop",
-          description: "Pause when every screen is fully covered by other windows.",
+          title: "Desktop hidden",
+          description: "Pause when other windows cover every display.",
         },
         {
           key: "autoPauseRemoteSession",
@@ -187,10 +187,10 @@
 
   async function handleSpeedChange(value: number) {
     const previous = s.settings.defaultPlaybackSpeed;
-    await s.update({ defaultPlaybackSpeed: value });
+    const result = await s.update({ defaultPlaybackSpeed: value });
 
-    if (s.error) {
-      toastStore.error(s.error);
+    if (!result.ok) {
+      toastStore.error(result.error);
     } else if (previous !== value) {
       toastStore.success("Settings saved");
     }
@@ -198,10 +198,10 @@
 
   async function handleFitModeChange(value: string) {
     const previous = s.settings.defaultFitMode;
-    await s.update({ defaultFitMode: value });
+    const result = await s.update({ defaultFitMode: value });
 
-    if (s.error) {
-      toastStore.error(s.error);
+    if (!result.ok) {
+      toastStore.error(result.error);
     } else if (previous !== value) {
       toastStore.success("Settings saved");
     }
@@ -209,10 +209,10 @@
 
   async function handleFpsCapChange(value: number | null) {
     const previous = s.settings.defaultFpsCap;
-    await s.update({ defaultFpsCap: value });
+    const result = await s.update({ defaultFpsCap: value });
 
-    if (s.error) {
-      toastStore.error(s.error);
+    if (!result.ok) {
+      toastStore.error(result.error);
     } else if (previous !== value) {
       toastStore.success("Settings saved");
     }
@@ -249,10 +249,10 @@
 
   async function handleToggle(key: BooleanSettingKey, value: boolean) {
     const previous = s.settings[key];
-    await s.update({ [key]: value } as Partial<Settings>);
+    const result = await s.update({ [key]: value } as Partial<Settings>);
 
-    if (s.error) {
-      toastStore.error(s.error);
+    if (!result.ok) {
+      toastStore.error(result.error);
     } else if (previous !== value) {
       toastStore.success("Settings saved");
     }
@@ -261,10 +261,10 @@
   async function handleIntervalChange(value: number) {
     const next = normalizeFavoriteRotationInterval(value);
     const previous = s.settings.favoriteRotationIntervalMinutes;
-    await s.update({ favoriteRotationIntervalMinutes: next });
+    const result = await s.update({ favoriteRotationIntervalMinutes: next });
 
-    if (s.error) {
-      toastStore.error(s.error);
+    if (!result.ok) {
+      toastStore.error(result.error);
     } else if (previous !== next) {
       toastStore.success("Settings saved");
     }
@@ -280,7 +280,7 @@
     try {
       const result = await task();
       if (action === "missing") {
-        await store.loadWallpapers();
+        await Promise.all([store.loadWallpapers(), store.loadOrganization()]);
       }
       await loadStorageStats();
       reportStorageResult(action, result);
