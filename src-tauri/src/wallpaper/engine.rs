@@ -67,6 +67,15 @@ pub struct WallpaperEngine {
 }
 
 impl WallpaperEngine {
+    #[cfg(test)]
+    pub(super) fn validate_runtime_outputs(&self, cap: Option<u32>) {
+        assert!(!self.video_players.is_empty());
+        for (slot, player) in &self.video_players {
+            println!("Desktop player slot: {slot}");
+            player.validate_runtime_output(cap);
+        }
+    }
+
     pub fn service_video_loops(&mut self) {
         for (slot, player) in self.video_players.iter_mut() {
             if let Err(error) = player.service_video_loop() {

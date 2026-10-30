@@ -39,7 +39,9 @@
 <style>
   .thumbnail-carousel {
     width: 100%;
-    padding: 0 clamp(46px, 4vw, 76px);
+    /* Keep raised thumbnails and focus rings inside the scroll clip. */
+    padding: 16px clamp(46px, 4vw, 76px);
+    margin-block: -16px;
     overflow-x: auto;
     overflow-y: hidden;
     white-space: nowrap;
@@ -159,7 +161,7 @@
 
   @media (max-width: 640px) {
     .thumbnail-carousel {
-      padding: 0 var(--space-6);
+      padding-inline: var(--space-6);
       mask-image: linear-gradient(
         90deg,
         #000 0,

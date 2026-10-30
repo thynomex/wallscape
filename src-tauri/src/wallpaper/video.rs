@@ -25,6 +25,10 @@ const FPS_FILTER_LABEL: &str = "@wallscape-fps";
 mod loop_clock;
 use loop_clock::{FilterTiming, LoopClock};
 
+#[cfg(test)]
+#[path = "video_validation.rs"]
+mod validation;
+
 unsafe extern "C" {
     fn mpv_command_string(ctx: *mut c_void, args: *const c_char) -> i32;
 }
@@ -49,6 +53,24 @@ pub struct VideoPlayer {
 }
 
 impl VideoPlayer {
+    #[cfg(test)]
+    pub(super) fn validate_runtime_output(&self, cap: Option<u32>) {
+        let mpv = self.mpv.as_ref().unwrap();
+        let hwdec = mpv.get_property::<String>("hwdec-current").unwrap();
+        let vo = mpv.get_property::<String>("current-vo").unwrap();
+        let context = mpv.get_property::<String>("current-gpu-context").unwrap();
+        let configured = mpv.get_property::<bool>("vo-configured").unwrap();
+        let position = mpv.get_property::<f64>("time-pos").unwrap();
+        println!("cap={cap:?}, hwdec={hwdec}, vo={vo}, context={context}, configured={configured}, position={position}");
+        assert!(
+            hwdec.starts_with("d3d11va"),
+            "hardware decoding inactive: {hwdec}"
+        );
+        assert_eq!(vo, "gpu");
+        assert_eq!(context, "d3d11");
+        assert!(configured && position > 0.1);
+    }
+
     pub fn new(video_path: impl AsRef<Path>) -> Result<Self> {
         let video_path = normalize_video_path(video_path.as_ref())?;
 

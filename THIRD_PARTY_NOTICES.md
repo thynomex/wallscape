@@ -4,9 +4,11 @@ Wallscape is distributed under the MIT License, but it depends on third-party so
 
 ## Bundled video runtime
 
-Release 0.2.0 installers include [mpv/libmpv](https://github.com/mpv-player/mpv) from the upstream Windows package `mpv-dev-x86_64-20261005-git-c152964208.7z`, distributed by [mpv-winbuild-cmake release 20261005](https://github.com/shinchiro/mpv-winbuild-cmake/releases/tag/20261005). Its enabled dependencies include FFmpeg and other upstream libraries. The package SHA-256 is `7D9DD506DA6B77E6054F56052F7423D9F7EED764F85154A6221925ABA37DBFB2`. mpv and FFmpeg licensing depends on their build configuration.
+Release 0.2.1 installers include `libmpv-2.dll` from the slim package `mpv-dev-slim-x86_64-c152964208.zip`, published at the [libmpv-slim-20261024 release](https://github.com/thynomex/wallscape/releases/tag/libmpv-slim-20261024) with SHA-256 `B22D705DD7CA51EC0505F6F1FB50AA069E079F5A3D390E41C95D241BFF40117B`. It is built by `scripts/build-libmpv-slim.ps1` from [mpv](https://github.com/mpv-player/mpv) `c1529642089b`, [FFmpeg](https://ffmpeg.org/) `a35c8799920a`, and [libplacebo](https://github.com/haasn/libplacebo) `92b5ac6db79f`, and statically links them with dav1d, libass, shaderc, SPIRV-Cross, glslang, zlib, and their MSYS2 dependencies at the versions in `scripts/libmpv-slim-toolchain.lock`.
 
-The current package provenance, build requirements, and runtime behavior are recorded in `docs/LIBMPV-SLIM-BUILD.md`. The earlier slim-runtime customization remains recorded in `docs/libmpv-slim-mpv-winbuild-cmake.patch` for reference. The runtime must be distributed with the applicable upstream license texts and corresponding source information.
+mpv is GPLv2+ with parts under LGPL, FFmpeg is configured without `--enable-gpl` and is LGPLv2.1+, and libplacebo is LGPLv2.1+, so the combined DLL is distributed under the GPL. The package includes these license texts and its build provenance. Build requirements, enabled components, and runtime behavior are recorded in `docs/LIBMPV-SLIM-BUILD.md`. The runtime must be distributed with the applicable upstream license texts and corresponding source information.
+
+Release 0.2.0 used the upstream Windows package `mpv-dev-x86_64-20261005-git-c152964208.7z` from [mpv-winbuild-cmake release 20261005](https://github.com/shinchiro/mpv-winbuild-cmake/releases/tag/20261005), which `npm run setup:mpv -- -FullRuntime` still installs.
 
 ## Rust and JavaScript dependencies
 

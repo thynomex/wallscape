@@ -1,6 +1,6 @@
 {
   "name": "wallscape-win",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Native Windows wallpaper manager for images and videos.",
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
+    "screenshots": "node scripts/screenshots/capture.mjs",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "setup:mpv": "powershell -ExecutionPolicy Bypass -File scripts/setup-libmpv.ps1",

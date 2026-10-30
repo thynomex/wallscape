@@ -49,6 +49,8 @@
   position: absolute;
   inset: 0;
   z-index: 1;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
   overflow-x: hidden;
   border-radius: inherit;
@@ -58,10 +60,16 @@
 
 .view-transition-panel {
   position: relative;
-  min-height: calc(100% - var(--nav-height));
+  /* Fill the space between the nav and status bar, whatever their heights. */
+  flex: 1 0 auto;
   transform-origin: 50% 0;
   animation: view-enter 520ms var(--ease-emphasized) both;
   will-change: opacity, transform, filter;
+}
+
+/* Keep the nav and status bar at their content height when the view overflows. */
+.scroll > * {
+  flex-shrink: 0;
 }
 
 .scroll::-webkit-scrollbar {

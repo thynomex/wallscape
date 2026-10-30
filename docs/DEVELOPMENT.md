@@ -16,7 +16,7 @@ npm run setup:mpv
 npm run tauri dev
 ```
 
-`setup:mpv` downloads a pinned archive, verifies its SHA-256 hash, installs development files under `.vendor/`, and stages the runtime DLL for Tauri packaging.
+`setup:mpv` downloads a pinned archive, verifies its SHA-256 hash, installs development files under `.vendor/`, and stages the runtime DLL for Tauri packaging. It installs the slim 37 MB runtime from the `libmpv-slim-20261024` release. If that archive cannot be downloaded, it warns and installs the 121 MB upstream package, which needs 7-Zip or NanaZip to extract. `npm run setup:mpv -- -FullRuntime` forces the upstream package. See [video runtime build notes](LIBMPV-SLIM-BUILD.md) to rebuild the slim runtime.
 
 ## Checks
 

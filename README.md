@@ -4,6 +4,8 @@ Wallscape is a free and open-source live wallpaper manager for Windows. It can a
 
 > Wallscape is currently an early release. Back up important settings and report reproducible problems through GitHub Issues.
 
+![Wallscape Home with a featured alpine wallpaper and a carousel of landscape favorites](docs/images/home.webp)
+
 ## Features
 
 - Image and video wallpapers on the Windows desktop
@@ -13,6 +15,22 @@ Wallscape is a free and open-source live wallpaper manager for Windows. It can a
 - Optional Wallhaven and MotionBGS discovery
 - Hardware-accelerated video playback through libmpv
 - Pause, resume, tray, startup, and resource-use settings
+
+## Screenshots
+
+Organize your library into collections, save favorites, and rotate through them.
+
+![Wallscape Library with landscape wallpapers, collections, favorites, and rotation controls](docs/images/library.webp)
+
+Search Wallhaven for still images or MotionBGS for live MP4 wallpapers, then add results to your library.
+
+![Wallscape Discover with Wallhaven search filters and wallpaper results](docs/images/discover.webp)
+
+Preview a wallpaper, choose a display, and apply it.
+
+![Wallscape wallpaper preview with the target display selector and Set Wallpaper button](docs/images/wallpaper-detail.webp)
+
+The wallpapers shown are a demo library of CC0 photographs by Sam Ferrara and are not bundled with Wallscape. Discover results in the screenshot are sample data. See the [screenshot workflow and credits](docs/APP-SCREENSHOTS.md).
 
 ## Download
 
@@ -37,7 +55,6 @@ Prerequisites:
 - Rust stable with the MSVC toolchain
 - Visual Studio Build Tools with Desktop development with C++
 - WebView2 Runtime
-- 7-Zip or NanaZip for extracting the pinned libmpv package
 
 ```powershell
 npm install
@@ -67,7 +84,7 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
 
 See [Development](docs/DEVELOPMENT.md), [Architecture](docs/ARCHITECTURE.md), and [Troubleshooting](docs/TROUBLESHOOTING.md).
 
-Release 0.2.0 includes a libmpv runtime with the frame filters needed for FPS limiting. This makes the installer larger than releases that used the slim runtime. See [runtime build notes](docs/LIBMPV-SLIM-BUILD.md).
+Release 0.2.1 bundles a slim libmpv runtime built from pinned sources. It keeps the FPS cap and D3D11 hardware decoding of the 0.2.0 runtime, and the installer shrinks from 55 MB to 22 MB. See [runtime build notes](docs/LIBMPV-SLIM-BUILD.md).
 
 ## Contributing and support
 

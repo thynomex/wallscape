@@ -4,6 +4,12 @@ Notable changes to Wallscape are documented here. The project follows [Semantic 
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-30
+
+- Replaced the bundled libmpv runtime with a 37.5 MB slim build (down from 120.9 MB) made from pinned sources. It keeps the FFmpeg `select` filter for the FPS cap, D3D11 hardware decoding, and the containers and codecs Wallscape imports. The installer drops from 55.1 MB to 22.5 MB.
+- Fixed short views scrolling slightly and hiding part of the status bar.
+- Fixed the selected Home carousel thumbnail's outline being cut off at the edge of the carousel.
+
 ## 0.2.0
 
 - Improved video FPS limiting and short-loop timing across pause, speed, and fit changes.

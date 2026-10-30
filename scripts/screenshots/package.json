@@ -1,0 +1,13 @@
+{
+  "name": "wallscape-screenshots",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "capture": "node capture.mjs",
+    "install-browser": "playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "1.64.1",
+    "sharp": "0.35.5"
+  }
+}

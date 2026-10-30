@@ -5,22 +5,16 @@ fn main() {
     let staged_mpv_dll = std::path::PathBuf::from("bundle/libmpv-2.dll");
 
     println!("cargo:rerun-if-env-changed=MPV_DEV_DIR");
-    println!(
-        "cargo:rerun-if-changed={}",
-        project_root
-            .join(".vendor")
-            .join("mpv-dev-filters")
-            .join("libmpv-2.dll")
-            .display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        project_root
-            .join(".vendor")
-            .join("mpv-dev")
-            .join("libmpv-2.dll")
-            .display()
-    );
+    for name in ["mpv-dev-slim", "mpv-dev-filters", "mpv-dev"] {
+        println!(
+            "cargo:rerun-if-changed={}",
+            project_root
+                .join(".vendor")
+                .join(name)
+                .join("libmpv-2.dll")
+                .display()
+        );
+    }
     println!("cargo:rerun-if-changed=C:/mpv-dev/libmpv-2.dll");
     println!("cargo:rerun-if-changed={}", mpv_dll.display());
     println!("cargo:rerun-if-changed={}", staged_mpv_dll.display());
@@ -46,14 +40,13 @@ fn resolve_mpv_dir(project_root: &std::path::Path) -> std::path::PathBuf {
         return std::path::PathBuf::from(mpv_dir);
     }
 
-    let filter_mpv_dir = project_root.join(".vendor").join("mpv-dev-filters");
-    if filter_mpv_dir.join("libmpv-2.dll").is_file() {
-        return filter_mpv_dir;
-    }
-
-    let vendored_mpv_dir = project_root.join(".vendor").join("mpv-dev");
-    if vendored_mpv_dir.join("libmpv-2.dll").is_file() {
-        return vendored_mpv_dir;
+    // The slim runtime installed by `npm run setup:mpv` takes precedence over
+    // the larger upstream package.
+    for name in ["mpv-dev-slim", "mpv-dev-filters", "mpv-dev"] {
+        let candidate = project_root.join(".vendor").join(name);
+        if candidate.join("libmpv-2.dll").is_file() {
+            return candidate;
+        }
     }
 
     std::path::PathBuf::from("C:/mpv-dev")
