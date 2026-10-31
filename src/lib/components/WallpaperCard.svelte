@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Wallpaper } from "$lib/types/wallpaper";
-  import Badge from "./Badge.svelte";
+  import { formatDimensions, wallpaperMediaLabel } from "$lib/utils/media";
   import Icon from "./Icon.svelte";
   import WallpaperPreviewMedia from "./WallpaperPreviewMedia.svelte";
 
@@ -8,28 +8,26 @@
     wallpaper,
     active = false,
     favoriteBusy = false,
-    onApply,
+    index = 0,
+    onOpen,
     onFavoriteChange,
   }: {
     wallpaper: Wallpaper;
     active?: boolean;
     favoriteBusy?: boolean;
-    onApply?: (w: Wallpaper) => void;
+    /** Position in the grid, used to stagger the entrance animation. */
+    index?: number;
+    onOpen?: (w: Wallpaper) => void;
     onFavoriteChange?: (w: Wallpaper, isFavorite: boolean) => void;
   } = $props();
 
   let previewing = $state(false);
   let favorited = $derived(Boolean(wallpaper.is_favorite));
   let hasVideoPreview = $derived(wallpaper.media_type === "video" && Boolean(wallpaper.file_path));
-  let mediaLabel = $derived(
-    wallpaper.media_type === "image"
-      ? "image"
-      : `${wallpaper.fps}fps`,
-  );
+  let dimensions = $derived(formatDimensions(wallpaper.width, wallpaper.height));
+  let mediaLabel = $derived(wallpaperMediaLabel(wallpaper));
 
-  function toggleFavorite(e: MouseEvent | KeyboardEvent) {
-    e.stopPropagation();
-    e.preventDefault();
+  function toggleFavorite() {
     if (favoriteBusy) return;
     onFavoriteChange?.(wallpaper, !favorited);
   }
@@ -44,14 +42,17 @@
   }
 </script>
 
-<button
+<!-- The open and favorite controls are sibling buttons: a button may not
+     contain another interactive element. -->
+<div
   class="wallpaper-card"
   class:active
   class:previewing={previewing}
-  onclick={() => onApply?.(wallpaper)}
-  aria-label={`Set ${wallpaper.title} as wallpaper`}
-  onmouseenter={startPreview}
-  onmouseleave={stopPreview}
+  style={`--card-index:${index}`}
+  role="group"
+  aria-label={wallpaper.title}
+  onpointerenter={startPreview}
+  onpointerleave={stopPreview}
   onfocusin={startPreview}
   onfocusout={stopPreview}
 >
@@ -67,36 +68,40 @@
     fallbackIconSize={40}
   />
 
-  {#if wallpaper.badge}
-    <div class="card-badge">
-      <Badge variant={wallpaper.badge}>{wallpaper.badge}</Badge>
-    </div>
-  {/if}
-
-  <span
-    class="fav"
-    class:on={favorited}
-    role="button"
-    tabindex="0"
-    aria-label={favorited ? "Remove from favorites" : "Add to favorites"}
-    aria-pressed={favorited}
-    onclick={toggleFavorite}
-    onkeydown={(e) => (e.key === "Enter" || e.key === " ") && toggleFavorite(e)}
-  >
-    <Icon name={favorited ? "heart-filled" : "heart"} size={18} />
-  </span>
-
   <div class="card-overlay">
     <h3 class="card-title">{wallpaper.title}</h3>
     <div class="card-metadata">
-      <span>{wallpaper.width}×{wallpaper.height}</span>
+      {#if dimensions}
+        <span>{dimensions}</span>
+      {/if}
       <span>{mediaLabel}</span>
       {#if wallpaper.tags.length}
-        <span>{wallpaper.tags[0]}</span>
+        <span class="card-tag">{wallpaper.tags[0]}</span>
       {/if}
     </div>
   </div>
-</button>
+
+  <button
+    type="button"
+    class="card-open"
+    aria-label={`Open ${wallpaper.title}`}
+    onclick={() => onOpen?.(wallpaper)}
+  ></button>
+
+  {#if onFavoriteChange}
+    <button
+      type="button"
+      class="fav"
+      class:on={favorited}
+      aria-label={favorited ? "Remove from favorites" : "Add to favorites"}
+      aria-pressed={favorited}
+      aria-disabled={favoriteBusy}
+      onclick={toggleFavorite}
+    >
+      <Icon name={favorited ? "heart-filled" : "heart"} size={18} />
+    </button>
+  {/if}
+</div>
 
 <style>
   .wallpaper-card {
@@ -117,27 +122,12 @@
       filter var(--motion-med) var(--ease-standard);
     will-change: transform;
     isolation: isolate;
-    animation: card-enter var(--motion-slow) var(--ease-emphasized) both;
-  }
-
-  .wallpaper-card:nth-child(2) {
-    animation-delay: 70ms;
-  }
-
-  .wallpaper-card:nth-child(3) {
-    animation-delay: 140ms;
-  }
-
-  .wallpaper-card:nth-child(4) {
-    animation-delay: 210ms;
-  }
-
-  .wallpaper-card:nth-child(5) {
-    animation-delay: 280ms;
-  }
-
-  .wallpaper-card:nth-child(n + 6) {
-    animation-delay: 350ms;
+    /* `backwards`, not `both`: a filled animation keeps setting transform
+       after it ends, which overrides the hover lift. The stagger uses the
+       grid index because Library wraps each card, so :nth-child is always 1. */
+    animation: card-enter var(--motion-slow) var(--ease-emphasized) backwards;
+    animation-delay: var(--card-enter-delay);
+    --card-enter-delay: calc(min(var(--card-index, 0), 5) * 70ms);
   }
 
   .wallpaper-card::before {
@@ -175,12 +165,34 @@
     transform: translateY(-2px) scale(0.992);
   }
 
+  .wallpaper-card:has(.card-open:focus-visible) {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 4px;
+  }
+
+  .card-open {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: none;
+    border-radius: inherit;
+    background: transparent;
+  }
+
+  /* The ring is drawn on the card, which clips this full-size button. */
+  .card-open:focus-visible {
+    outline: none;
+  }
+
   .wallpaper-card.active {
     border-color: var(--border-active);
     box-shadow: 0 0 0 2px var(--border-active), 0 12px 28px rgba(0, 0, 0, 0.4);
     animation:
-      card-enter var(--motion-slow) var(--ease-emphasized) both,
-      active-card-glow 1600ms var(--ease-standard) 220ms both;
+      card-enter var(--motion-slow) var(--ease-emphasized) var(--card-enter-delay) backwards,
+      active-card-glow 1600ms var(--ease-standard) 220ms backwards;
   }
 
   :global(.card-image) {
@@ -222,30 +234,18 @@
     background: var(--bg-tertiary);
   }
 
-  .card-badge {
-    position: absolute;
-    top: 12px;
-    left: 12px;
-    z-index: 2;
-    transition:
-      transform var(--motion-med) var(--ease-emphasized),
-      opacity var(--motion-med) var(--ease-standard);
-  }
-
-  .wallpaper-card:hover .card-badge {
-    transform: translateY(-2px);
-  }
-
   .fav {
     position: absolute;
     top: 14px;
     right: 14px;
-    z-index: 2;
+    z-index: 4;
     width: 34px;
     height: 34px;
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 0;
+    border: none;
     border-radius: 50%;
     color: #ffffff;
     background: rgba(15, 20, 25, 0.44);
@@ -258,9 +258,16 @@
       color var(--motion-fast) var(--ease-standard);
   }
 
+  /* Keyboard focus anywhere in the card reveals the heart, so tabbing never
+     lands on an invisible control. */
   .wallpaper-card:hover .fav,
+  .wallpaper-card:focus-within .fav,
   .fav.on {
     opacity: 1;
+  }
+
+  .fav[aria-disabled="true"] {
+    cursor: wait;
   }
 
   .fav.on {
@@ -298,6 +305,7 @@
   }
 
   .wallpaper-card:hover .card-overlay,
+  .wallpaper-card:focus-within .card-overlay,
   .wallpaper-card.active .card-overlay {
     opacity: 1;
     transform: translateY(0);
@@ -319,7 +327,6 @@
     gap: 12px;
     font-size: 14px;
     color: var(--text-secondary);
-    text-transform: capitalize;
     opacity: 0;
     transform: translateY(8px);
     transition:
@@ -329,11 +336,17 @@
   }
 
   .wallpaper-card:hover .card-title,
+  .wallpaper-card:focus-within .card-title,
   .wallpaper-card.active .card-title,
   .wallpaper-card:hover .card-metadata,
+  .wallpaper-card:focus-within .card-metadata,
   .wallpaper-card.active .card-metadata {
     opacity: 1;
     transform: translateY(0);
+  }
+
+  .card-tag {
+    text-transform: capitalize;
   }
 
   @keyframes card-enter {
@@ -376,22 +389,6 @@
     .card-metadata {
       opacity: 1;
       transform: translateY(0);
-    }
-  }
-
-  @media (max-width: 520px) {
-    .wallpaper-card {
-      border-radius: 18px;
-    }
-    .card-overlay {
-      padding: 18px;
-    }
-    .card-title {
-      font-size: 16px;
-    }
-    .card-metadata {
-      gap: 8px;
-      font-size: 12px;
     }
   }
 

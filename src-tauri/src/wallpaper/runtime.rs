@@ -8,7 +8,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE,
 };
 
-use super::engine::{FitMode, PlaybackOptions};
+use super::engine::{FitMode, PlaybackOptions, PlayerStatus};
 use super::WallpaperEngine;
 
 #[derive(Debug, Clone)]
@@ -24,13 +24,15 @@ pub struct WallpaperRuntime {
     snapshot: Arc<RwLock<RuntimeSnapshot>>,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct RuntimeSnapshot {
     pub active: bool,
     pub paused: bool,
     pub auto_paused: bool,
     pub playback_speed: Option<f64>,
     pub fit_mode: Option<FitMode>,
+    /// Which file each display is playing, with its speed and fit.
+    pub players: Vec<PlayerStatus>,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -179,7 +181,7 @@ impl WallpaperRuntime {
     }
 
     pub fn snapshot(&self) -> RuntimeSnapshot {
-        *self.snapshot.read()
+        self.snapshot.read().clone()
     }
 
     pub fn is_auto_paused(&self) -> bool {
@@ -270,6 +272,7 @@ trait RuntimeEngine {
     fn stop_target(&mut self, target: WallpaperTarget) -> Result<()>;
     fn has_active_players(&self) -> bool;
     fn playback_values(&self) -> (Option<f64>, Option<FitMode>);
+    fn player_statuses(&self) -> Vec<PlayerStatus>;
     fn service_video_loops(&mut self) {}
 }
 
@@ -311,6 +314,10 @@ impl RuntimeEngine for WallpaperEngine {
         WallpaperEngine::playback_values(self)
     }
 
+    fn player_statuses(&self) -> Vec<PlayerStatus> {
+        WallpaperEngine::player_statuses(self)
+    }
+
     fn service_video_loops(&mut self) {
         WallpaperEngine::service_video_loops(self);
     }
@@ -329,12 +336,18 @@ fn publish_snapshot<E: RuntimeEngine>(
         .filter(|_| active)
         .map(RuntimeEngine::playback_values)
         .unwrap_or_default();
+    let players = engine
+        .as_ref()
+        .filter(|_| active)
+        .map(RuntimeEngine::player_statuses)
+        .unwrap_or_default();
     *snapshot.write() = RuntimeSnapshot {
         active,
         paused: active && intent.effective(),
         auto_paused: active && intent.automatic,
         playback_speed,
         fit_mode,
+        players,
     };
 }
 
@@ -582,6 +595,7 @@ mod tests {
     struct FakePlayback {
         players: Mutex<HashMap<String, bool>>,
         options: Mutex<HashMap<String, PlaybackOptions>>,
+        paths: Mutex<HashMap<String, String>>,
         reject_pause: AtomicBool,
     }
 
@@ -603,17 +617,22 @@ mod tests {
             }
             let mut players = self.playback.players.lock();
             let mut playback_options = self.playback.options.lock();
+            let mut paths = self.playback.paths.lock();
             match target {
                 WallpaperTarget::All => {
                     players.clear();
                     players.insert("all".into(), self.paused);
                     playback_options.clear();
                     playback_options.insert("all".into(), options);
+                    paths.clear();
+                    paths.insert("all".into(), path.into());
                 }
                 WallpaperTarget::Monitor(id) => {
                     players.remove("all");
                     playback_options.remove("all");
+                    paths.remove("all");
                     playback_options.insert(id.clone(), options);
+                    paths.insert(id.clone(), path.into());
                     players.insert(id, self.paused);
                 }
             }
@@ -653,6 +672,7 @@ mod tests {
         fn stop(&mut self) -> Result<()> {
             self.playback.players.lock().clear();
             self.playback.options.lock().clear();
+            self.playback.paths.lock().clear();
             self.window.take();
             Ok(())
         }
@@ -667,6 +687,9 @@ mod tests {
                     let mut options = self.playback.options.lock();
                     options.remove("all");
                     options.remove(&id);
+                    let mut paths = self.playback.paths.lock();
+                    paths.remove("all");
+                    paths.remove(&id);
                     Ok(())
                 }
             }
@@ -691,6 +714,22 @@ mod tests {
                     .all(|value| value.fit_mode == first.fit_mode)
                     .then_some(first.fit_mode),
             )
+        }
+
+        fn player_statuses(&self) -> Vec<PlayerStatus> {
+            let options = self.playback.options.lock();
+            let paths = self.playback.paths.lock();
+            let mut players: Vec<PlayerStatus> = options
+                .iter()
+                .map(|(slot, options)| PlayerStatus {
+                    slot: slot.clone(),
+                    video_path: paths.get(slot).cloned().unwrap_or_default(),
+                    speed: options.speed,
+                    fit_mode: options.fit_mode,
+                })
+                .collect();
+            players.sort_by(|a, b| a.slot.cmp(&b.slot));
+            players
         }
     }
 
@@ -741,6 +780,45 @@ mod tests {
         runtime.stop().unwrap();
         assert_eq!(runtime.snapshot().playback_speed, None);
         assert_eq!(runtime.snapshot().fit_mode, None);
+    }
+
+    #[test]
+    fn snapshot_reports_the_file_and_speed_on_each_display() {
+        let (runtime, _) = fake_runtime();
+        apply(&runtime, "A", "forest.mp4").unwrap();
+        apply(&runtime, "B", "city.mp4").unwrap();
+        runtime.set_speed(2.0, Some("B".into())).unwrap();
+
+        let players = runtime.snapshot().players;
+        let summary: Vec<(&str, &str, f64)> = players
+            .iter()
+            .map(|player| {
+                (
+                    player.slot.as_str(),
+                    player.video_path.as_str(),
+                    player.speed,
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            vec![("A", "forest.mp4", 1.0), ("B", "city.mp4", 2.0)]
+        );
+        // Mixed speeds across displays leave the aggregate unset.
+        assert_eq!(runtime.snapshot().playback_speed, None);
+
+        runtime
+            .stop_target(WallpaperTarget::Monitor("A".into()))
+            .unwrap();
+        let remaining: Vec<String> = runtime
+            .snapshot()
+            .players
+            .into_iter()
+            .map(|player| player.video_path)
+            .collect();
+        assert_eq!(remaining, vec!["city.mp4".to_string()]);
+        runtime.stop().unwrap();
+        assert!(runtime.snapshot().players.is_empty());
     }
 
     struct ObservedRuntime {
@@ -903,6 +981,12 @@ mod tests {
         apply(&runtime, "A", "valid").unwrap();
         runtime.set_paused(true).unwrap();
         apply(&runtime, "B", "valid").unwrap();
+        let player = |slot: &str| PlayerStatus {
+            slot: slot.into(),
+            video_path: "valid".into(),
+            speed: 1.0,
+            fit_mode: FitMode::Fit,
+        };
         assert_eq!(
             runtime.snapshot(),
             RuntimeSnapshot {
@@ -911,6 +995,7 @@ mod tests {
                 auto_paused: false,
                 playback_speed: Some(1.0),
                 fit_mode: Some(FitMode::Fit),
+                players: vec![player("A"), player("B")],
             }
         );
         assert_eq!(

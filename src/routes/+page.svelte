@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { store } from "$lib/stores/wallpapers.svelte";
   import "$lib/styles/views.css";
   import AmbientBackground from "$lib/components/AmbientBackground.svelte";
@@ -23,8 +23,10 @@
     Collection,
     MotionBgsWallpaper,
     SavedFilter,
+    StoreActionResult,
     WallhavenWallpaper,
     Wallpaper,
+    WallpaperHistoryEntry,
   } from "$lib/types/wallpaper";
   import {
     deleteCollectionConfirmationMessage,
@@ -35,7 +37,12 @@
     deleteCollection as deleteCollectionWorkflow,
     setCollectionMembership as setCollectionMembershipWorkflow,
   } from "$lib/utils/collectionWorkflow";
+  import { confirmAction } from "$lib/utils/confirmDialog";
   import { indexById, nextCircularIndex } from "$lib/utils/detailNavigation";
+  import {
+    formatRemoteDownloadButtonLabel,
+    remoteDownloadKey,
+  } from "$lib/utils/downloadProgress";
   import {
     runFavoriteRotation,
     updateFavoriteRotationEnabled as updateFavoriteRotationEnabledWorkflow,
@@ -53,6 +60,8 @@
     revealWallpaperInExplorer,
   } from "$lib/utils/libraryMaintenanceWorkflow";
   import { resolveWallpaperThumbnailSrc } from "$lib/utils/media";
+  import { motionBgsResultForDetailWallpaper } from "$lib/utils/motionbgsDetail";
+  import { motionBgsDownloadSourceId } from "$lib/utils/motionbgsDownload";
   import {
     motionBgsSearchArgs,
     type MotionBgsSearchFields,
@@ -90,6 +99,9 @@
   import { isViewName, type ViewName } from "$lib/utils/viewNavigation";
 
   const CAROUSEL_INTERVAL_MS = 7_000;
+  // Download sources as keyed by the Wallhaven and MotionBGS stores.
+  const WALLHAVEN_DOWNLOAD_SOURCE = "wallhaven";
+  const MOTIONBGS_DOWNLOAD_SOURCE = "motionbgs";
   type DiscoverSource = "wallhaven" | "motionbgs";
 
   let activeView = $state<ViewName>("home");
@@ -117,6 +129,18 @@
   let rotationResetTick = $state(0);
   let applyTargetMonitorId = $state<string | null>(null);
   let applyingWallpaperPath = $state<string | null>(null);
+  // Remote (Wallhaven/MotionBGS) apply started from the detail view: it
+  // downloads first, then applies the imported local copy. `path` is the
+  // preview's remote URL; `downloadKey` finds its progress.
+  let remoteApply = $state<{
+    path: string;
+    downloadKey: string | null;
+    phase: "downloading" | "applying";
+  } | null>(null);
+  // Covers the whole import (scan, probe, save); store.importing only covers
+  // the final save.
+  let importBusy = $state(false);
+  let modalOpener: HTMLElement | null = null;
   let dropActive = $state(false);
   let dropItemCount = $state(0);
   let thumbnailBusyId = $state<number | null>(null);
@@ -180,6 +204,21 @@
         ? `Drop ${dropItemCount} items to import`
         : "Drop wallpapers to import",
   );
+  let remoteApplyLabel = $derived.by(() => {
+    if (!remoteApply) return null;
+    if (remoteApply.phase === "applying") return "Applying";
+    const download = remoteApply.downloadKey
+      ? store.remoteDownloads[remoteApply.downloadKey]
+      : null;
+    return formatRemoteDownloadButtonLabel(download, "Downloading...");
+  });
+  let importing = $derived(importBusy || store.importing);
+  let modalOpen = $derived(
+    showSettings ||
+      detailWallpaper !== null ||
+      wallhavenDetail !== null ||
+      motionBgsDetail !== null,
+  );
   let localSavedFilters = $derived(
     store.savedFilters.filter((filter) => filter.filter_type === "local"),
   );
@@ -194,6 +233,46 @@
     ) {
       applyTargetMonitorId = null;
     }
+  });
+
+  // The footer repeats the latest error. When an error toast carries the same
+  // message, the footer clears once that toast is gone; an error that never
+  // got a toast stays in the footer until dismissed or replaced.
+  let footerErrorToastSeen: string | null = null;
+  $effect(() => {
+    const error = store.error;
+    if (!error) {
+      footerErrorToastSeen = null;
+      return;
+    }
+    const toastShown = toastStore.toasts.some(
+      (toast) => toast.type === "error" && toast.message === error && !toast.dismissing,
+    );
+    if (toastShown) {
+      footerErrorToastSeen = error;
+    } else if (footerErrorToastSeen === error) {
+      footerErrorToastSeen = null;
+      store.error = null;
+    }
+  });
+
+  // Modals: the page behind them is `inert`, so Tab stays in the open modal
+  // (each modal focuses itself on mount). Remember what opened it before the
+  // page goes inert, and hand focus back once the page is interactive again.
+  $effect.pre(() => {
+    if (!modalOpen || modalOpener) return;
+    const active = document.activeElement;
+    modalOpener = active instanceof HTMLElement && active !== document.body ? active : null;
+  });
+
+  $effect(() => {
+    if (modalOpen) return;
+    const opener = modalOpener;
+    modalOpener = null;
+    if (!opener) return;
+    void tick().then(() => {
+      if (opener.isConnected) opener.focus({ preventScroll: true });
+    });
   });
 
   $effect(() => {
@@ -373,7 +452,10 @@
   async function handleRemove(wallpaper: Wallpaper) {
     if (wallpaper.id <= 0) return;
 
-    const confirmed = window.confirm(removeWallpaperConfirmationMessage(wallpaper));
+    const confirmed = await confirmAction(removeWallpaperConfirmationMessage(wallpaper), {
+      title: "Remove wallpaper",
+      okLabel: "Remove",
+    });
 
     if (!confirmed) return;
 
@@ -528,7 +610,7 @@
     store.search(searchQuery);
   }
 
-  async function handleSaveLocalFilter(name: string) {
+  async function handleSaveLocalFilter(name: string): Promise<boolean> {
     const result = await saveLocalSavedFilter(name, searchQuery, {
       saveFilter: (name, filterType, payload) =>
         store.saveFilter(name, filterType, payload),
@@ -536,21 +618,24 @@
 
     if (!result.ok) {
       toastStore.error(result.error);
-      return;
+      return false;
     }
 
     toastStore.success("Filter saved");
+    return true;
   }
 
+  // A failed search already shows its error in place of the results, so only
+  // a successful one gets the confirmation toast.
   async function handleApplyLocalFilter(filter: SavedFilter) {
     await applyLocalSavedFilter(filter, async (query) => {
       searchQuery = query;
       await store.search(query);
     });
-    toastStore.success("Filter applied");
+    if (!store.searchError) toastStore.success("Filter applied");
   }
 
-  async function handleSaveWallhavenFilter(name: string) {
+  async function handleSaveWallhavenFilter(name: string): Promise<boolean> {
     const result = await saveWallhavenSavedFilter(name, currentWallhavenFields(), {
       saveFilter: (name, filterType, payload) =>
         store.saveFilter(name, filterType, payload),
@@ -558,10 +643,11 @@
 
     if (!result.ok) {
       toastStore.error(result.error);
-      return;
+      return false;
     }
 
     toastStore.success("Wallhaven filter saved");
+    return true;
   }
 
   async function handleApplyWallhavenFilter(filter: SavedFilter) {
@@ -574,7 +660,7 @@
       wallhavenRatio = fields.ratios;
       await searchWallhaven(1);
     });
-    toastStore.success("Wallhaven filter applied");
+    if (!store.wallhavenError) toastStore.success("Wallhaven filter applied");
   }
 
   async function handleDeleteSavedFilter(filter: SavedFilter) {
@@ -684,43 +770,97 @@
     );
   }
 
-  async function applyWallhavenDetail(wallpaper: Wallpaper, monitorId: string | null = null) {
-    const imported = await downloadWallhavenDetailWallpaper(
-      wallpaper,
-      store.wallhavenResults,
-      {
-        downloadWallhaven: (wallpaper) => store.downloadWallhaven(wallpaper),
-      },
-    );
-    if (!imported.ok) {
-      toastStore.error(imported.error);
+  // Downloads a Discover preview into the library, then applies it. The
+  // detail view shows progress through remoteApply until both steps finish.
+  async function applyRemoteDetail(
+    wallpaper: Wallpaper,
+    monitorId: string | null,
+    downloadKey: string | null,
+    download: () => Promise<StoreActionResult<Wallpaper>>,
+  ) {
+    if (remoteApply) {
+      toastStore.info("Wait for the current download to finish.");
       return;
     }
 
-    await handleApply(imported.value, monitorId);
+    remoteApply = { path: wallpaper.file_path, downloadKey, phase: "downloading" };
+    try {
+      const imported = await download();
+      if (!imported.ok) {
+        toastStore.error(imported.error);
+        return;
+      }
+
+      remoteApply.phase = "applying";
+      await handleApply(imported.value, monitorId);
+    } finally {
+      remoteApply = null;
+    }
   }
 
-  async function applyMotionBgsDetail(wallpaper: Wallpaper, monitorId: string | null = null) {
-    const imported = await downloadMotionBgsDetailWallpaper(
+  function applyWallhavenDetail(wallpaper: Wallpaper, monitorId: string | null = null) {
+    return applyRemoteDetail(
       wallpaper,
-      store.motionBgsResults,
-      {
-        downloadMotionBgs: (wallpaper) => store.downloadMotionBgs(wallpaper),
-      },
+      monitorId,
+      wallpaper.source_id
+        ? remoteDownloadKey(WALLHAVEN_DOWNLOAD_SOURCE, wallpaper.source_id)
+        : null,
+      () =>
+        downloadWallhavenDetailWallpaper(wallpaper, store.wallhavenResults, {
+          downloadWallhaven: (wallpaper) => store.downloadWallhaven(wallpaper),
+        }),
     );
-    if (!imported.ok) {
-      toastStore.error(imported.error);
+  }
+
+  function applyMotionBgsDetail(wallpaper: Wallpaper, monitorId: string | null = null) {
+    const result = motionBgsResultForDetailWallpaper(store.motionBgsResults, wallpaper);
+    return applyRemoteDetail(
+      wallpaper,
+      monitorId,
+      result
+        ? remoteDownloadKey(MOTIONBGS_DOWNLOAD_SOURCE, motionBgsDownloadSourceId(result))
+        : null,
+      () =>
+        downloadMotionBgsDetailWallpaper(wallpaper, store.motionBgsResults, {
+          downloadMotionBgs: (wallpaper) => store.downloadMotionBgs(wallpaper),
+        }),
+    );
+  }
+
+  function historyWallpaper(entry: WallpaperHistoryEntry) {
+    return (
+      store.wallpapers.find((wallpaper) =>
+        entry.wallpaper_id !== null
+          ? wallpaper.id === entry.wallpaper_id
+          : wallpaper.file_path === entry.file_path,
+      ) ?? null
+    );
+  }
+
+  async function handleApplyHistory(entry: WallpaperHistoryEntry) {
+    const wallpaper = historyWallpaper(entry);
+    if (!wallpaper) {
+      toastStore.warning(`"${entry.title}" is no longer in your library.`);
       return;
     }
 
-    await handleApply(imported.value, monitorId);
+    // Re-apply to the same display, or everywhere if it is gone.
+    const monitorId =
+      entry.target_monitor_id &&
+      store.monitors.some((monitor) => monitor.id === entry.target_monitor_id)
+        ? entry.target_monitor_id
+        : null;
+    await handleApply(wallpaper, monitorId);
   }
 
-  async function handleUpload() {
-    await handleImportFiles();
+  function ensureImportIdle() {
+    if (!importing) return true;
+    toastStore.info("An import is already running.");
+    return false;
   }
 
   async function handleImportFiles() {
+    if (!ensureImportIdle()) return;
     try {
       const paths = await selectWallpaperFiles();
       await importSelectedPaths(paths, "selected");
@@ -732,6 +872,7 @@
   }
 
   async function handleImportFolder() {
+    if (!ensureImportIdle()) return;
     try {
       const paths = await selectWallpaperFolders();
       await importSelectedPaths(paths, "folder");
@@ -743,8 +884,9 @@
   }
 
   async function importSelectedPaths(paths: string[], source: ImportSource) {
-    if (!paths.length || store.importing) return;
+    if (!paths.length || importing) return;
 
+    importBusy = true;
     const outcome = await importSelectedWallpaperPaths(
       paths,
       source,
@@ -756,7 +898,9 @@
         setStatus: (status) => (store.importStatus = status),
         setWarnings: (warnings) => (store.importWarnings = warnings),
       },
-    );
+    ).finally(() => {
+      importBusy = false;
+    });
 
     if (!outcome.ok) {
       if (outcome.kind === "unexpected") {
@@ -803,10 +947,14 @@
     return result.value.value;
   }
 
-  async function handleDeleteCollection(collection: Collection) {
-    const confirmed = window.confirm(deleteCollectionConfirmationMessage(collection));
+  /** True only when the collection was deleted (not cancelled, not failed). */
+  async function handleDeleteCollection(collection: Collection): Promise<boolean> {
+    const confirmed = await confirmAction(deleteCollectionConfirmationMessage(collection), {
+      title: "Delete collection",
+      okLabel: "Delete",
+    });
 
-    if (!confirmed) return;
+    if (!confirmed) return false;
 
     collectionBusyId = collection.id;
     try {
@@ -815,10 +963,11 @@
       });
       if (!result.ok) {
         toastStore.error(result.error);
-        return;
+        return false;
       }
 
       toastStore.success(result.value.message);
+      return true;
     } finally {
       collectionBusyId = null;
     }
@@ -861,11 +1010,12 @@
     <ImportDropOverlay hint={dropHint} />
   {/if}
 
-  <div class="scroll" bind:this={scrollEl}>
+  <div class="scroll" bind:this={scrollEl} inert={modalOpen}>
     <NavigationBar
       {activeView}
+      {importing}
       onNavigate={navigateTo}
-      onUpload={handleUpload}
+      onImport={handleImportFiles}
       onSettings={() => (showSettings = true)}
     />
 
@@ -905,12 +1055,12 @@
       collections={store.collections}
       collectionMemberships={store.collectionMemberships}
       {collectionBusyId}
-      importing={store.importing}
+      {importing}
+      importStatus={store.importStatus}
       {dropActive}
       rotationEnabled={settingsStore.settings.favoriteRotationEnabled}
       rotationIntervalMinutes={settingsStore.settings.favoriteRotationIntervalMinutes}
       {rotationBusy}
-      onApply={handleApply}
       onOpen={openDetail}
       onSelectFeatured={selectFeaturedWallpaper}
       onFavoriteChange={handleFavoriteChange}
@@ -948,8 +1098,12 @@
       error={store.error}
       importStatus={store.importStatus}
       importWarnings={store.importWarnings}
+      applying={applyingWallpaperPath !== null}
+      canApplyHistory={(entry) => historyWallpaper(entry) !== null}
       onRestore={handleRestore}
       onUndoHistory={handleUndoWallpaperHistory}
+      onApplyHistory={handleApplyHistory}
+      onDismissError={() => (store.error = null)}
     />
   </div>
 
@@ -960,6 +1114,8 @@
     monitors={store.monitors}
     {applyTargetMonitorId}
     {applyingWallpaperPath}
+    remoteApplyPath={remoteApply?.path ?? null}
+    {remoteApplyLabel}
     {favoriteBusyId}
     {thumbnailBusyId}
     {canCancelWallpaper}

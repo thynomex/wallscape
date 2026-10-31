@@ -13,7 +13,8 @@
     filters: SavedFilter[];
     disabled?: boolean;
     placeholder?: string;
-    onSave: (name: string) => void | Promise<void>;
+    /** Resolves to true when the filter was saved. */
+    onSave: (name: string) => boolean | Promise<boolean>;
     onApply: (filter: SavedFilter) => void | Promise<void>;
     onDelete: (filter: SavedFilter) => void | Promise<void>;
   } = $props();
@@ -35,8 +36,8 @@
     const nextName = name.trim();
     if (!nextName || disabled) return;
 
-    await onSave(nextName);
-    name = "";
+    // Keep the typed name after a failure so it can be fixed and resubmitted.
+    if (await onSave(nextName)) name = "";
   }
 </script>
 
@@ -178,21 +179,4 @@
     cursor: not-allowed;
   }
 
-  @media (max-width: 720px) {
-    .saved-filter-controls,
-    .saved-filter-picker,
-    .saved-filter-save {
-      width: 100%;
-    }
-
-    .saved-filter-picker select,
-    .saved-filter-save input {
-      width: 100%;
-      flex: 1;
-    }
-
-    .saved-filter-save button {
-      flex: 0 0 auto;
-    }
-  }
 </style>

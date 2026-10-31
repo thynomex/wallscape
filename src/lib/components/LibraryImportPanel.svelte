@@ -3,6 +3,7 @@
 
   let {
     importing = false,
+    status = null,
     loading = false,
     dropActive = false,
     onImportFiles,
@@ -10,6 +11,8 @@
     onCheckFiles,
   }: {
     importing?: boolean;
+    /** Current import step, shown here because the footer is off-screen. */
+    status?: string | null;
     loading?: boolean;
     dropActive?: boolean;
     onImportFiles: () => void | Promise<void>;
@@ -18,10 +21,17 @@
   } = $props();
 </script>
 
-<div class="import-panel" class:drop-active={dropActive}>
-  <div>
+<div class="import-panel" class:drop-active={dropActive} aria-busy={importing}>
+  <div class="import-copy">
     <h3>Import</h3>
-    <p>Images, videos, and folders from disk.</p>
+    {#if importing}
+      <p class="import-status" title={status ?? undefined}>
+        <Icon name="refresh" size={14} spin />
+        <span>{status ?? "Importing..."}</span>
+      </p>
+    {:else}
+      <p>Images, videos, and folders from disk.</p>
+    {/if}
   </div>
 
   <div class="import-actions">
@@ -105,6 +115,24 @@
     font-size: 13px;
   }
 
+  .import-copy {
+    min-width: 0;
+  }
+
+  .import-panel .import-status {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--text-primary);
+  }
+
+  .import-status span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .import-actions {
     display: flex;
     align-items: center;
@@ -154,22 +182,6 @@
     }
     to {
       transform: translateX(115%);
-    }
-  }
-
-  @media (max-width: 720px) {
-    .import-panel {
-      width: 100%;
-      align-items: stretch;
-      flex-direction: column;
-    }
-
-    .import-actions {
-      justify-content: stretch;
-    }
-
-    .import-actions button {
-      flex: 1 1 120px;
     }
   }
 

@@ -76,6 +76,47 @@ export function mediaTypeLabel(mediaType: string | null | undefined) {
   return mediaType === "image" ? "Image" : "Video";
 }
 
+/** Short media descriptor shared by the hero, cards, and detail view. */
+export function wallpaperMediaLabel(
+  wallpaper:
+    | {
+        media_type?: string | null;
+        fps?: number | null;
+        duration_ms?: number | null;
+      }
+    | null
+    | undefined,
+): string {
+  if (!wallpaper) return "";
+  if (wallpaper.media_type === "image") return "Image";
+
+  const fps = Math.round(wallpaper.fps ?? 0);
+  if (fps > 0) return `${fps}fps video`;
+
+  const seconds = Math.round((wallpaper.duration_ms ?? 0) / 1000);
+  if (seconds > 0) return `${seconds}s video`;
+
+  return "Video";
+}
+
+/** Formats pixel dimensions as `1920×1080`, or an empty string when unknown. */
+export function formatDimensions(
+  width: number | null | undefined,
+  height: number | null | undefined,
+): string {
+  return width && height && width > 0 && height > 0 ? `${width}×${height}` : "";
+}
+
+/** Normalizes API resolution strings such as `1920x1080` to `1920×1080`. */
+export function formatResolution(resolution: string | null | undefined): string {
+  return (resolution ?? "").replace(/(\d)\s*x\s*(\d)/i, "$1×$2");
+}
+
+/** Formats a byte count as whole megabytes (minimum `1MB`), or "" when unknown. */
+export function formatFileSizeMb(bytes: number | null | undefined): string {
+  return bytes && bytes > 0 ? `${Math.max(1, Math.round(bytes / 1024 / 1024))}MB` : "";
+}
+
 function pathExtension(path: string) {
   const cleanPath = path.split(/[?#]/, 1)[0] ?? path;
   return cleanPath.split(".").pop()?.toLowerCase() ?? "";

@@ -14,6 +14,7 @@
     Wallpaper,
   } from "$lib/types/wallpaper";
   import type { RemoteDownloadStates } from "$lib/types/downloads";
+  import type { LibraryFilter, RenderWindow } from "$lib/types/library";
   import type { ViewName } from "$lib/utils/viewNavigation";
 
   type DiscoverSource = "wallhaven" | "motionbgs";
@@ -55,11 +56,11 @@
     collectionMemberships = [],
     collectionBusyId = null,
     importing = false,
+    importStatus = null,
     dropActive = false,
     rotationEnabled = false,
     rotationIntervalMinutes = 30,
     rotationBusy = false,
-    onApply,
     onOpen,
     onSelectFeatured,
     onFavoriteChange,
@@ -125,23 +126,23 @@
     collectionMemberships?: CollectionMembership[];
     collectionBusyId?: number | null;
     importing?: boolean;
+    importStatus?: string | null;
     dropActive?: boolean;
     rotationEnabled?: boolean;
     rotationIntervalMinutes?: number;
     rotationBusy?: boolean;
-    onApply: (wallpaper: Wallpaper, monitorId?: string | null) => void | Promise<void>;
     onOpen: (wallpaper: Wallpaper) => void;
     onSelectFeatured: (wallpaper: Wallpaper) => void;
     onFavoriteChange: (wallpaper: Wallpaper, isFavorite: boolean) => void | Promise<void>;
     onCarouselPausedChange: (paused: boolean) => void;
     onSearch: () => void;
-    onSaveLocalFilter: (name: string) => void | Promise<void>;
+    onSaveLocalFilter: (name: string) => boolean | Promise<boolean>;
     onApplyLocalFilter: (filter: SavedFilter) => void | Promise<void>;
     onDeleteFilter: (filter: SavedFilter) => void | Promise<void>;
     onDiscoverSourceChange: (source: DiscoverSource) => void;
     onSearchWallhaven: (page?: number) => void | Promise<void>;
     onSearchMotionBgs: (page?: number) => void | Promise<void>;
-    onSaveWallhavenFilter: (name: string) => void | Promise<void>;
+    onSaveWallhavenFilter: (name: string) => boolean | Promise<boolean>;
     onApplyWallhavenFilter: (filter: SavedFilter) => void | Promise<void>;
     onOpenWallhaven: (wallpaper: WallhavenWallpaper) => void;
     onOpenMotionBgs: (wallpaper: MotionBgsWallpaper) => void;
@@ -158,13 +159,18 @@
     onCreateCollection: (
       name: string,
     ) => Collection | null | void | Promise<Collection | null | void>;
-    onDeleteCollection: (collection: Collection) => void | Promise<void>;
+    onDeleteCollection: (collection: Collection) => boolean | Promise<boolean>;
     onCollectionMembershipChange: (
       collection: Collection,
       wallpaper: Wallpaper,
       inCollection: boolean,
     ) => void | Promise<void>;
   } = $props();
+
+  // Views remount on every switch; state kept here survives coming back.
+  let libraryFilter = $state<LibraryFilter>("all");
+  let libraryRenderWindow = $state<RenderWindow | null>(null);
+  let exploreRenderWindow = $state<RenderWindow | null>(null);
 </script>
 
 {#key activeView}
@@ -175,7 +181,6 @@
         {featured}
         {selected}
         {loading}
-        onApply={onApply}
         onOpen={onOpen}
         onSelectFeatured={onSelectFeatured}
         onFavoriteChange={onFavoriteChange}
@@ -228,6 +233,7 @@
         error={searchError}
         {favoriteBusyId}
         savedFilters={localSavedFilters}
+        bind:renderWindow={exploreRenderWindow}
         onSearch={onSearch}
         onSaveFilter={onSaveLocalFilter}
         onApplyFilter={onApplyLocalFilter}
@@ -244,11 +250,14 @@
         {collections}
         {collectionMemberships}
         {collectionBusyId}
+        bind:filter={libraryFilter}
+        bind:renderWindow={libraryRenderWindow}
         onBrowse={onBrowseWallhaven}
         onOpen={onOpen}
         onFavoriteChange={onFavoriteChange}
         onRandomFavorite={onRandomFavorite}
         {importing}
+        {importStatus}
         {dropActive}
         {onImportFiles}
         {onImportFolder}

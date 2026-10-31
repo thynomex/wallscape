@@ -9,15 +9,17 @@
   import LibraryHeader from "$lib/components/LibraryHeader.svelte";
   import LibraryImportPanel from "$lib/components/LibraryImportPanel.svelte";
   import LibraryResults from "$lib/components/LibraryResults.svelte";
-
-  type LibraryFilter = "all" | "favorites" | `collection:${number}`;
+  import type { LibraryFilter, RenderWindow } from "$lib/types/library";
 
   let {
     wallpapers,
     selected,
     loading = false,
     favoriteBusyId = null,
+    filter = $bindable("all"),
+    renderWindow = $bindable(null),
     importing = false,
+    importStatus = null,
     dropActive = false,
     rotationEnabled = false,
     rotationIntervalMinutes = 30,
@@ -42,7 +44,11 @@
     selected: Wallpaper | null;
     loading?: boolean;
     favoriteBusyId?: number | null;
+    /** Bound by the owner so the filter outlives this view. */
+    filter?: LibraryFilter;
+    renderWindow?: RenderWindow | null;
     importing?: boolean;
+    importStatus?: string | null;
     dropActive?: boolean;
     rotationEnabled?: boolean;
     rotationIntervalMinutes?: number;
@@ -62,7 +68,8 @@
     onCreateCollection: (
       name: string,
     ) => Collection | null | void | Promise<Collection | null | void>;
-    onDeleteCollection: (collection: Collection) => void | Promise<void>;
+    /** Resolves to true only when the collection was deleted. */
+    onDeleteCollection: (collection: Collection) => boolean | Promise<boolean>;
     onCollectionMembershipChange: (
       collection: Collection,
       wallpaper: Wallpaper,
@@ -70,7 +77,6 @@
     ) => void | Promise<void>;
   } = $props();
 
-  let filter = $state<LibraryFilter>("all");
   let favoriteWallpapers = $derived(
     wallpapers.filter((wallpaper) => wallpaper.is_favorite),
   );
@@ -107,7 +113,7 @@
       ? "This collection is empty."
       : filter === "favorites"
         ? "No favorites yet."
-        : "Browse Wallhaven or MotionBGs, or import files to add wallpapers.",
+        : "Browse Wallhaven or MotionBGS, or import files to add wallpapers.",
   );
 
   $effect(() => {
@@ -115,10 +121,6 @@
       filter = "all";
     }
   });
-
-  function collectionFilter(id: number): LibraryFilter {
-    return `collection:${id}` as LibraryFilter;
-  }
 
   async function removeFromSelectedCollection(wallpaper: Wallpaper) {
     if (!selectedCollection) return;
@@ -128,13 +130,10 @@
 
 <section class="content-section view-pad" use:reveal={{ distance: "20px", delay: 40 }}>
   <LibraryHeader
-    activeFilter={filter}
-    wallpaperCount={wallpapers.length}
     favoriteCount={favoriteWallpapers.length}
     {rotationEnabled}
     {rotationIntervalMinutes}
     {rotationBusy}
-    onFilterChange={(nextFilter) => (filter = nextFilter)}
     {onRandomFavorite}
     {onRotationEnabledChange}
     {onRotationIntervalChange}
@@ -142,6 +141,7 @@
 
   <LibraryImportPanel
     {importing}
+    status={importStatus}
     {loading}
     {dropActive}
     {onImportFiles}
@@ -152,12 +152,12 @@
   <LibraryCollectionPanel
     {wallpapers}
     {collections}
+    activeFilter={filter}
+    favoriteCount={favoriteWallpapers.length}
     {selectedCollection}
-    {selectedCollectionId}
     {selectedCollectionWallpaperIds}
     {collectionBusyId}
-    onSelectCollection={(collectionId) => (filter = collectionFilter(collectionId))}
-    onSelectAll={() => (filter = "all")}
+    onFilterChange={(nextFilter) => (filter = nextFilter)}
     {onCreateCollection}
     {onDeleteCollection}
     {onCollectionMembershipChange}
@@ -173,6 +173,7 @@
       showAllOnEmpty={(filter === "favorites" || Boolean(selectedCollection)) && wallpapers.length > 0}
       {selectedCollection}
       {collectionBusyId}
+      bind:renderWindow
       onShowAll={() => (filter = "all")}
       {onBrowse}
       {onOpen}

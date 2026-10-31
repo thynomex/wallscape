@@ -20,7 +20,14 @@
 
   let { onClose }: { onClose?: () => void } = $props();
 
+  type SaveState = "saving" | "saved";
+  const SAVED_INDICATOR_MS = 1600;
+
   const s = settingsStore;
+  let panelEl = $state<HTMLDivElement | null>(null);
+  // Per-setting save feedback, so only the control being saved is disabled.
+  let saveStates = $state<Partial<Record<keyof Settings, SaveState>>>({});
+  const savedIndicatorTimers = new Map<keyof Settings, number>();
   let storageStats = $state<StorageStats | null>(null);
   let storageLoading = $state(false);
   let storageError = $state<string | null>(null);
@@ -185,37 +192,34 @@
     return `${fps} FPS`;
   }
 
-  async function handleSpeedChange(value: number) {
-    const previous = s.settings.defaultPlaybackSpeed;
-    const result = await s.update({ defaultPlaybackSpeed: value });
-
-    if (!result.ok) {
-      toastStore.error(result.error);
-    } else if (previous !== value) {
-      toastStore.success("Settings saved");
-    }
+  function isSaving(key: keyof Settings) {
+    return saveStates[key] === "saving";
   }
 
-  async function handleFitModeChange(value: string) {
-    const previous = s.settings.defaultFitMode;
-    const result = await s.update({ defaultFitMode: value });
+  async function saveSetting<K extends keyof Settings>(key: K, value: Settings[K]) {
+    const timer = savedIndicatorTimers.get(key);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      savedIndicatorTimers.delete(key);
+    }
+
+    saveStates[key] = "saving";
+    const result = await s.update({ [key]: value } as Partial<Settings>);
 
     if (!result.ok) {
+      delete saveStates[key];
       toastStore.error(result.error);
-    } else if (previous !== value) {
-      toastStore.success("Settings saved");
+      return;
     }
-  }
 
-  async function handleFpsCapChange(value: number | null) {
-    const previous = s.settings.defaultFpsCap;
-    const result = await s.update({ defaultFpsCap: value });
-
-    if (!result.ok) {
-      toastStore.error(result.error);
-    } else if (previous !== value) {
-      toastStore.success("Settings saved");
-    }
+    saveStates[key] = "saved";
+    savedIndicatorTimers.set(
+      key,
+      window.setTimeout(() => {
+        savedIndicatorTimers.delete(key);
+        delete saveStates[key];
+      }, SAVED_INDICATOR_MS),
+    );
   }
 
   function handleBackdrop(e: MouseEvent) {
@@ -227,7 +231,14 @@
   }
 
   onMount(() => {
+    // The page behind is inert while this is open; the page restores focus.
+    panelEl?.focus({ preventScroll: true });
     void loadStorageStats();
+
+    return () => {
+      for (const timer of savedIndicatorTimers.values()) window.clearTimeout(timer);
+      savedIndicatorTimers.clear();
+    };
   });
 
   async function loadStorageStats() {
@@ -244,29 +255,6 @@
       if (storageAction === "refresh") {
         storageAction = null;
       }
-    }
-  }
-
-  async function handleToggle(key: BooleanSettingKey, value: boolean) {
-    const previous = s.settings[key];
-    const result = await s.update({ [key]: value } as Partial<Settings>);
-
-    if (!result.ok) {
-      toastStore.error(result.error);
-    } else if (previous !== value) {
-      toastStore.success("Settings saved");
-    }
-  }
-
-  async function handleIntervalChange(value: number) {
-    const next = normalizeFavoriteRotationInterval(value);
-    const previous = s.settings.favoriteRotationIntervalMinutes;
-    const result = await s.update({ favoriteRotationIntervalMinutes: next });
-
-    if (!result.ok) {
-      toastStore.error(result.error);
-    } else if (previous !== next) {
-      toastStore.success("Settings saved");
     }
   }
 
@@ -346,10 +334,29 @@
 
 <svelte:window onkeydown={handleKey} />
 
+{#snippet saveIndicator(key: keyof Settings)}
+  <span class="save-state" class:visible={saveStates[key]} aria-live="polite">
+    {#if saveStates[key] === "saving"}
+      <Icon name="refresh" size={13} spin />
+      Saving
+    {:else if saveStates[key] === "saved"}
+      <Icon name="check" size={13} />
+      Saved
+    {/if}
+  </span>
+{/snippet}
+
 <div class="overlay" role="presentation" onclick={handleBackdrop}>
-  <div class="panel" role="dialog" aria-modal="true" aria-label="Settings">
+  <div
+    class="panel"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="settings-title"
+    tabindex="-1"
+    bind:this={panelEl}
+  >
     <header class="panel-head">
-      <h2>Settings</h2>
+      <h2 id="settings-title">Settings</h2>
       <button class="close-btn" aria-label="Close settings" onclick={() => onClose?.()}>
         <Icon name="close" size={18} />
       </button>
@@ -365,12 +372,15 @@
                 <span class="row-title">{row.title}</span>
                 <span class="row-desc">{row.description}</span>
               </div>
-              <Toggle
-                checked={s.settings[row.key]}
-                disabled={s.saving}
-                label={row.title}
-                onChange={(v) => handleToggle(row.key, v)}
-              />
+              <div class="row-control">
+                {@render saveIndicator(row.key)}
+                <Toggle
+                  checked={s.settings[row.key]}
+                  disabled={isSaving(row.key)}
+                  label={row.title}
+                  onChange={(v) => saveSetting(row.key, v)}
+                />
+              </div>
             </div>
           {/each}
         </section>
@@ -383,12 +393,15 @@
             <span class="row-title">Rotate favorites</span>
             <span class="row-desc">Change wallpaper automatically from your favorites.</span>
           </div>
-          <Toggle
-            checked={s.settings.favoriteRotationEnabled}
-            disabled={s.saving}
-            label="Rotate favorites"
-            onChange={(v) => handleToggle("favoriteRotationEnabled", v)}
-          />
+          <div class="row-control">
+            {@render saveIndicator("favoriteRotationEnabled")}
+            <Toggle
+              checked={s.settings.favoriteRotationEnabled}
+              disabled={isSaving("favoriteRotationEnabled")}
+              label="Rotate favorites"
+              onChange={(v) => saveSetting("favoriteRotationEnabled", v)}
+            />
+          </div>
         </div>
 
         <div class="row">
@@ -396,18 +409,28 @@
             <span class="row-title">Rotation interval</span>
             <span class="row-desc">Minutes between favorite wallpaper changes.</span>
           </div>
-          <input
-            class="number-input"
-            type="number"
-            min="1"
-            max="1440"
-            step="1"
-            value={s.settings.favoriteRotationIntervalMinutes}
-            disabled={s.saving}
-            aria-label="Favorite rotation interval in minutes"
-            onchange={(e) =>
-              handleIntervalChange((e.currentTarget as HTMLInputElement).valueAsNumber)}
-          />
+          <div class="row-control">
+            {@render saveIndicator("favoriteRotationIntervalMinutes")}
+            <input
+              class="number-input"
+              type="number"
+              min="1"
+              max="1440"
+              step="1"
+              value={s.settings.favoriteRotationIntervalMinutes}
+              disabled={isSaving("favoriteRotationIntervalMinutes")}
+              aria-label="Favorite rotation interval in minutes"
+              onchange={(e) => {
+                const input = e.currentTarget as HTMLInputElement;
+                const next = normalizeFavoriteRotationInterval(input.valueAsNumber);
+                // Show the clamped value even when it matches the saved one.
+                input.value = String(next);
+                if (next !== s.settings.favoriteRotationIntervalMinutes) {
+                  void saveSetting("favoriteRotationIntervalMinutes", next);
+                }
+              }}
+            />
+          </div>
         </div>
 
         <div class="row">
@@ -415,12 +438,15 @@
             <span class="row-title">Rotate on startup</span>
             <span class="row-desc">Apply a random favorite when Wallscape opens.</span>
           </div>
-          <Toggle
-            checked={s.settings.favoriteRotationOnStartup}
-            disabled={s.saving}
-            label="Rotate on startup"
-            onChange={(v) => handleToggle("favoriteRotationOnStartup", v)}
-          />
+          <div class="row-control">
+            {@render saveIndicator("favoriteRotationOnStartup")}
+            <Toggle
+              checked={s.settings.favoriteRotationOnStartup}
+              disabled={isSaving("favoriteRotationOnStartup")}
+              label="Rotate on startup"
+              onChange={(v) => saveSetting("favoriteRotationOnStartup", v)}
+            />
+          </div>
         </div>
       </section>
 
@@ -431,23 +457,26 @@
             <span class="row-title">Default playback speed</span>
             <span class="row-desc">Starting speed for video wallpapers (can adjust per video).</span>
           </div>
-          <select
-            class="select-input"
-            bind:value={playbackSpeedValue}
-            disabled={s.saving}
-            aria-label="Default playback speed"
-            onchange={(e) => {
-              const value = numberFromSelectValue((e.currentTarget as HTMLSelectElement).value);
-              if (value !== null) handleSpeedChange(value);
-            }}
-          >
-            {#if customPlaybackSpeed !== null}
-              <option value={playbackSpeedValue}>{playbackSpeedLabel(customPlaybackSpeed)}</option>
-            {/if}
-            {#each playbackSpeedOptions as speed (speed)}
-              <option value={String(speed)}>{playbackSpeedLabel(speed)}</option>
-            {/each}
-          </select>
+          <div class="row-control">
+            {@render saveIndicator("defaultPlaybackSpeed")}
+            <select
+              class="select-input"
+              bind:value={playbackSpeedValue}
+              disabled={isSaving("defaultPlaybackSpeed")}
+              aria-label="Default playback speed"
+              onchange={(e) => {
+                const value = numberFromSelectValue((e.currentTarget as HTMLSelectElement).value);
+                if (value !== null) void saveSetting("defaultPlaybackSpeed", value);
+              }}
+            >
+              {#if customPlaybackSpeed !== null}
+                <option value={playbackSpeedValue}>{playbackSpeedLabel(customPlaybackSpeed)}</option>
+              {/if}
+              {#each playbackSpeedOptions as speed (speed)}
+                <option value={String(speed)}>{playbackSpeedLabel(speed)}</option>
+              {/each}
+            </select>
+          </div>
         </div>
 
         <div class="row">
@@ -455,18 +484,21 @@
             <span class="row-title">Default fit mode</span>
             <span class="row-desc">How video wallpapers scale to fit your screen.</span>
           </div>
-          <select
-            class="select-input"
-            bind:value={fitModeValue}
-            disabled={s.saving}
-            aria-label="Default fit mode"
-            onchange={(e) =>
-              handleFitModeChange((e.currentTarget as HTMLSelectElement).value)}
-          >
-            {#each fitModeOptions as option (option.value)}
-              <option value={option.value}>{option.label}</option>
-            {/each}
-          </select>
+          <div class="row-control">
+            {@render saveIndicator("defaultFitMode")}
+            <select
+              class="select-input"
+              bind:value={fitModeValue}
+              disabled={isSaving("defaultFitMode")}
+              aria-label="Default fit mode"
+              onchange={(e) =>
+                void saveSetting("defaultFitMode", (e.currentTarget as HTMLSelectElement).value)}
+            >
+              {#each fitModeOptions as option (option.value)}
+                <option value={option.value}>{option.label}</option>
+              {/each}
+            </select>
+          </div>
         </div>
 
         <div class="row">
@@ -474,25 +506,29 @@
             <span class="row-title">FPS cap</span>
             <span class="row-desc">Limit frame rate to reduce GPU usage.</span>
           </div>
-          <select
-            class="select-input"
-            bind:value={fpsCapValue}
-            disabled={s.saving}
-            aria-label="FPS cap"
-            onchange={(e) => {
-              handleFpsCapChange(
-                fpsCapFromSelectValue((e.currentTarget as HTMLSelectElement).value),
-              );
-            }}
-          >
-            <option value="0">Unlimited</option>
-            {#if customFpsCap !== null}
-              <option value={fpsCapValue}>{fpsCapLabel(customFpsCap)}</option>
-            {/if}
-            {#each fpsCapOptions as fps (fps)}
-              <option value={String(fps)}>{fpsCapLabel(fps)}</option>
-            {/each}
-          </select>
+          <div class="row-control">
+            {@render saveIndicator("defaultFpsCap")}
+            <select
+              class="select-input"
+              bind:value={fpsCapValue}
+              disabled={isSaving("defaultFpsCap")}
+              aria-label="FPS cap"
+              onchange={(e) => {
+                void saveSetting(
+                  "defaultFpsCap",
+                  fpsCapFromSelectValue((e.currentTarget as HTMLSelectElement).value),
+                );
+              }}
+            >
+              <option value="0">Unlimited</option>
+              {#if customFpsCap !== null}
+                <option value={fpsCapValue}>{fpsCapLabel(customFpsCap)}</option>
+              {/if}
+              {#each fpsCapOptions as fps (fps)}
+                <option value={String(fps)}>{fpsCapLabel(fps)}</option>
+              {/each}
+            </select>
+          </div>
         </div>
       </section>
 
@@ -505,7 +541,7 @@
             disabled={storageLoading || storageAction !== null}
             onclick={() => loadStorageStats()}
           >
-            <Icon name="refresh" size={15} />
+            <Icon name="refresh" size={15} spin={storageLoading} />
           </button>
         </div>
 
@@ -545,7 +581,7 @@
             onclick={() => runStorageAction("wallhaven", clearWallhavenCache)}
           >
             {#if storageAction === "wallhaven"}
-              <Icon name="refresh" size={15} />
+              <Icon name="refresh" size={15} spin />
             {:else}
               <Icon name="trash" size={15} />
             {/if}
@@ -568,7 +604,7 @@
             onclick={() => runStorageAction("thumbnails", cleanupUnusedThumbnails)}
           >
             {#if storageAction === "thumbnails"}
-              <Icon name="refresh" size={15} />
+              <Icon name="refresh" size={15} spin />
             {:else}
               <Icon name="trash" size={15} />
             {/if}
@@ -591,7 +627,7 @@
             onclick={() => runStorageAction("missing", cleanupMissingLibraryEntries)}
           >
             {#if storageAction === "missing"}
-              <Icon name="refresh" size={15} />
+              <Icon name="refresh" size={15} spin />
             {:else}
               <Icon name="check" size={15} />
             {/if}
@@ -765,6 +801,36 @@
     font-size: 13px;
     color: var(--text-secondary);
     line-height: 1.4;
+  }
+
+  .row-control {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-shrink: 0;
+  }
+
+  /* Inline "Saving / Saved" next to the control that changed, in place of a
+     toast per click. Space is reserved so the control does not shift. */
+  .save-state {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 5px;
+    min-width: 62px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    opacity: 0;
+    transition: opacity var(--motion-fast) var(--ease-standard);
+  }
+
+  .save-state.visible {
+    opacity: 1;
+  }
+
+  .panel:focus-visible {
+    outline: none;
   }
 
   .number-input {

@@ -2,6 +2,10 @@
   import type { Wallpaper } from "$lib/types/wallpaper";
   import WallpaperPreviewMedia from "./WallpaperPreviewMedia.svelte";
 
+  // Matches the width of the edge fade in the mask below; a thumbnail under
+  // the fade counts as hidden.
+  const EDGE_FADE_PX = 42;
+
   let {
     items,
     activeId,
@@ -11,14 +15,38 @@
     activeId?: number;
     onSelect?: (w: Wallpaper) => void;
   } = $props();
+
+  let scrollerEl = $state<HTMLDivElement | null>(null);
+
+  // The row can be wider than the window and has no visible scrollbar, so
+  // bring the active thumbnail into view when autoplay or a click changes it.
+  $effect(() => {
+    const id = activeId;
+    if (!scrollerEl || id === undefined) return;
+
+    const item = scrollerEl.querySelector<HTMLElement>(`[data-thumbnail-id="${id}"]`);
+    if (!item) return;
+
+    const view = scrollerEl.getBoundingClientRect();
+    const rect = item.getBoundingClientRect();
+    const overflowLeft = view.left + EDGE_FADE_PX - rect.left;
+    const overflowRight = rect.right - (view.right - EDGE_FADE_PX);
+
+    if (overflowLeft > 0) {
+      scrollerEl.scrollBy({ left: -overflowLeft });
+    } else if (overflowRight > 0) {
+      scrollerEl.scrollBy({ left: overflowRight });
+    }
+  });
 </script>
 
-<div class="thumbnail-carousel">
+<div class="thumbnail-carousel" bind:this={scrollerEl}>
   <div class="thumbnail-list">
     {#each items as item (item.id)}
       <button
         class="thumbnail-item"
         class:active={item.id === activeId}
+        data-thumbnail-id={item.id}
         onclick={() => onSelect?.(item)}
         aria-label={`Preview ${item.title}`}
       >
@@ -84,7 +112,9 @@
       box-shadow var(--motion-med) var(--ease-standard),
       opacity var(--motion-fast) var(--ease-standard),
       filter var(--motion-med) var(--ease-standard);
-    animation: thumb-enter var(--motion-slow) var(--ease-emphasized) both;
+    /* `backwards`, not `both`: a filled animation keeps setting transform
+       after it ends, which overrides the hover and active raise. */
+    animation: thumb-enter var(--motion-slow) var(--ease-emphasized) backwards;
   }
 
   .thumbnail-item:nth-child(2) {
@@ -156,27 +186,6 @@
       opacity: 1;
       transform: translate3d(0, 0, 0) scale(1);
       filter: blur(0);
-    }
-  }
-
-  @media (max-width: 640px) {
-    .thumbnail-carousel {
-      padding-inline: var(--space-6);
-      mask-image: linear-gradient(
-        90deg,
-        #000 0,
-        #000 calc(100% - 34px),
-        transparent 100%
-      );
-    }
-    .thumbnail-list {
-      justify-content: flex-start;
-      gap: 14px;
-    }
-    .thumbnail-item {
-      width: 150px;
-      height: 104px;
-      border-radius: 18px;
     }
   }
 

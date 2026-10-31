@@ -4,13 +4,15 @@
 
   let {
     activeView = "home",
+    importing = false,
     onNavigate,
-    onUpload,
+    onImport,
     onSettings,
   }: {
     activeView?: string;
+    importing?: boolean;
     onNavigate?: (view: string) => void;
-    onUpload?: () => void;
+    onImport?: () => void;
     onSettings?: () => void;
   } = $props();
 
@@ -23,7 +25,7 @@
 </script>
 
 <nav class="nav-bar" data-tauri-drag-region use:reveal={{ distance: "12px", threshold: 0.05 }}>
-  <div class="nav-leading">
+  <div class="nav-leading" data-tauri-drag-region>
     <div class="logo" data-tauri-drag-region>
       <div class="logo-icon">
         <img src="/wallscape-logo.png" alt="" />
@@ -37,6 +39,7 @@
       <button
         class="nav-pill"
         class:active={activeView === pill.id}
+        aria-current={activeView === pill.id ? "page" : undefined}
         onclick={() => onNavigate?.(pill.id)}
       >
         {pill.label}
@@ -44,10 +47,23 @@
     {/each}
   </div>
 
-  <div class="nav-actions">
-    <button class="btn-settings" aria-label="Upload" onclick={() => onUpload?.()}>
-      <span>Upload</span>
-      <Icon name="upload" size={19} strokeWidth={1.9} />
+  <div class="nav-actions" data-tauri-drag-region>
+    <!-- Not disabled while importing: a disabled button would drop keyboard
+         focus. The page ignores repeat imports while one runs. -->
+    <button
+      class="btn-settings btn-import"
+      aria-label={importing ? "Importing wallpapers" : "Import wallpapers"}
+      aria-busy={importing}
+      title="Import files from this PC"
+      onclick={() => onImport?.()}
+    >
+      <span class="btn-label">{importing ? "Importing" : "Import"}</span>
+      <Icon
+        name={importing ? "refresh" : "upload"}
+        size={19}
+        strokeWidth={1.9}
+        spin={importing}
+      />
     </button>
     <button class="btn-settings btn-icon-only" aria-label="Settings" onclick={() => onSettings?.()}>
       <Icon name="settings" size={20} />
@@ -60,10 +76,14 @@
     position: sticky;
     top: 0;
     min-height: 108px;
-    display: flex;
+    /* Equal side tracks keep the pills centered whatever the logo and
+       action group widths are. */
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     align-items: center;
-    justify-content: space-between;
-    padding: 22px clamp(46px, 4vw, 76px) 18px;
+    gap: var(--space-4);
+    /* The logo starts on the shared page edge, level with the hero copy. */
+    padding: 22px var(--page-inset) 18px;
     z-index: 100;
     /* Scrim so white logo/pills stay legible over bright hero imagery. */
     background: linear-gradient(
@@ -79,8 +99,7 @@
     display: flex;
     align-items: center;
     gap: 14px;
-    min-width: 230px;
-    padding-left: 52px;
+    min-width: 0;
   }
 
   .logo {
@@ -193,9 +212,11 @@
     display: flex;
     align-items: center;
     gap: 9px;
-    min-width: 230px;
+    min-width: 0;
     justify-content: flex-end;
-    padding-right: 128px;
+    /* Clear the window controls in the shell's top-right corner (about 92px
+       from its edge). The nav's own padding is at least --page-gutter. */
+    margin-right: max(0px, calc(104px - var(--page-gutter)));
   }
 
   .btn-settings {
@@ -233,75 +254,6 @@
   .btn-settings:hover {
     background: var(--glass-control);
     transform: translateY(-1px);
-  }
-
-  @media (max-width: 720px) {
-    .nav-bar {
-      min-height: 112px;
-      display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 10px 12px;
-      padding: 36px var(--space-4) 14px;
-    }
-    .nav-leading,
-    .nav-actions {
-      min-width: auto;
-    }
-    .nav-leading {
-      padding-left: 0;
-    }
-    .nav-actions {
-      grid-column: 1 / -1;
-      padding-right: 0;
-      justify-content: flex-end;
-    }
-    .logo-text {
-      display: none;
-    }
-    .nav-pills {
-      padding: 5px;
-      max-width: 100%;
-      overflow-x: auto;
-      scrollbar-width: none;
-      justify-self: stretch;
-      justify-content: flex-start;
-    }
-    .nav-pills::-webkit-scrollbar {
-      display: none;
-    }
-    .nav-pill {
-      min-width: 72px;
-      height: 38px;
-      padding: 0 14px;
-      font-size: 14px;
-    }
-    .btn-settings {
-      height: 40px;
-      padding: 0 12px;
-      font-size: 0;
-    }
-    .btn-settings.btn-icon-only {
-      width: 40px;
-    }
-    .nav-actions {
-      gap: 6px;
-    }
-  }
-
-  @media (max-width: 440px) {
-    .nav-bar {
-      grid-template-columns: 1fr;
-      padding-top: 36px;
-    }
-    .nav-leading {
-      display: none;
-    }
-    .nav-actions {
-      justify-content: stretch;
-    }
-    .btn-settings:not(.btn-icon-only) {
-      flex: 1;
-    }
   }
 
   @keyframes nav-drop {

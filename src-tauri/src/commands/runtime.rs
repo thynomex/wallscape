@@ -1,8 +1,6 @@
-use crate::settings::{Settings, SettingsState};
+use crate::wallpaper::engine::{FitMode, PlayerStatus};
 use crate::wallpaper::WallpaperRuntime;
-use crate::AppDatabase;
 use serde::Serialize;
-use tauri::Manager;
 
 #[derive(Debug, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -18,21 +16,51 @@ pub struct RuntimeStatus {
     pub playback_speed: Option<f64>,
     /// Current fit mode, or null when inactive or different across displays.
     pub fit_mode: Option<String>,
+    /// Each display's video wallpaper.
+    pub players: Vec<RuntimePlayerStatus>,
+}
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimePlayerStatus {
+    /// Monitor id the player runs on; pass it as `monitorId` to target it.
+    pub monitor_id: String,
+    /// File the display is playing, as passed to `set_wallpaper`.
+    pub video_path: String,
+    pub playback_speed: f64,
+    pub fit_mode: String,
+}
+
+fn fit_mode_name(mode: FitMode) -> String {
+    match mode {
+        FitMode::Fit => "fit",
+        FitMode::Fill => "fill",
+        FitMode::Stretch => "stretch",
+    }
+    .to_string()
+}
+
+impl From<PlayerStatus> for RuntimePlayerStatus {
+    fn from(player: PlayerStatus) -> Self {
+        Self {
+            monitor_id: player.slot,
+            video_path: player.video_path,
+            playback_speed: player.speed,
+            fit_mode: fit_mode_name(player.fit_mode),
+        }
+    }
 }
 
 impl From<crate::wallpaper::runtime::RuntimeSnapshot> for RuntimeStatus {
     fn from(snapshot: crate::wallpaper::runtime::RuntimeSnapshot) -> Self {
-        use crate::wallpaper::engine::FitMode;
         Self {
             active: snapshot.active,
             paused: snapshot.paused,
             auto_paused: snapshot.auto_paused,
             playback_speed: snapshot.playback_speed,
-            fit_mode: snapshot.fit_mode.map(|mode| match mode {
-                FitMode::Fit => "fit".to_string(),
-                FitMode::Fill => "fill".to_string(),
-                FitMode::Stretch => "stretch".to_string(),
-            }),
+            fit_mode: snapshot.fit_mode.map(fit_mode_name),
+            players: snapshot.players.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -64,9 +92,10 @@ pub async fn set_wallpaper_paused(
     Ok(snapshot.into())
 }
 
+/// Changes the speed of the running wallpaper on one display (or all). The
+/// saved default in Settings is left alone; it applies to the next wallpaper.
 #[tauri::command]
 pub async fn set_wallpaper_speed(
-    app_handle: tauri::AppHandle,
     runtime: tauri::State<'_, WallpaperRuntime>,
     speed: f64,
     monitor_id: Option<String>,
@@ -74,161 +103,43 @@ pub async fn set_wallpaper_speed(
     if !speed.is_finite() {
         return Err("Playback speed must be a finite number".to_string());
     }
-    update_playback_default(
-        app_handle,
-        runtime.inner().clone(),
-        PlaybackSetting::Speed(speed),
-        monitor_id,
-    )
+    let runtime = runtime.inner().clone();
+    run_live_playback_change(runtime, move |runtime| {
+        runtime
+            .set_speed(speed, monitor_id)
+            .map_err(|error| format!("Failed to set playback speed: {}", error))
+    })
     .await
 }
 
+/// Changes the fit mode of the running wallpaper on one display (or all). The
+/// saved default in Settings is left alone; it applies to the next wallpaper.
 #[tauri::command]
 pub async fn set_wallpaper_fit_mode(
-    app_handle: tauri::AppHandle,
     runtime: tauri::State<'_, WallpaperRuntime>,
     mode: String,
     monitor_id: Option<String>,
 ) -> Result<RuntimeStatus, String> {
-    update_playback_default(
-        app_handle,
-        runtime.inner().clone(),
-        PlaybackSetting::FitMode(mode),
-        monitor_id,
-    )
+    let runtime = runtime.inner().clone();
+    run_live_playback_change(runtime, move |runtime| {
+        runtime
+            .set_fit_mode(mode, monitor_id)
+            .map_err(|error| format!("Failed to set fit mode: {}", error))
+    })
     .await
 }
 
-enum PlaybackSetting {
-    Speed(f64),
-    FitMode(String),
-}
-
-async fn update_playback_default(
-    app_handle: tauri::AppHandle,
+async fn run_live_playback_change(
     runtime: WallpaperRuntime,
-    setting: PlaybackSetting,
-    monitor_id: Option<String>,
+    change: impl FnOnce(&WallpaperRuntime) -> Result<(), String> + Send + 'static,
 ) -> Result<RuntimeStatus, String> {
     tokio::task::spawn_blocking(move || {
-        let _update = super::settings::settings_update_lock();
-        let db = app_handle
-            .try_state::<AppDatabase>()
-            .ok_or_else(|| "Database state is not initialized".to_string())?;
-        // Release the database lock before waiting for the wallpaper actor.
-        let mut settings = Settings::load(&db.0.lock());
-        match &setting {
-            PlaybackSetting::Speed(speed) => settings.default_playback_speed = *speed,
-            PlaybackSetting::FitMode(mode) => settings.default_fit_mode = mode.clone(),
+        if !runtime.is_active() {
+            return Err("No video wallpaper is playing".to_string());
         }
-        let settings = settings.normalized();
-        commit_playback_change(
-            settings,
-            |settings| {
-                if !runtime.is_active() {
-                    return Ok(());
-                }
-                match setting {
-                    PlaybackSetting::Speed(_) => runtime
-                        .set_speed(settings.default_playback_speed, monitor_id)
-                        .map_err(|error| format!("Failed to set playback speed: {}", error)),
-                    PlaybackSetting::FitMode(_) => runtime
-                        .set_fit_mode(settings.default_fit_mode.clone(), monitor_id)
-                        .map_err(|error| format!("Failed to set fit mode: {}", error)),
-                }
-            },
-            |settings| settings.save(&db.0.lock()),
-            |settings| {
-                if let Some(state) = app_handle.try_state::<SettingsState>() {
-                    state.set(settings);
-                }
-            },
-        )?;
-        let snapshot = runtime.snapshot();
-        Ok(snapshot.into())
+        change(&runtime)?;
+        Ok(runtime.snapshot().into())
     })
     .await
     .map_err(|error| format!("Playback update task failed: {}", error))?
-}
-
-fn commit_playback_change(
-    settings: Settings,
-    apply: impl FnOnce(&Settings) -> Result<(), String>,
-    persist: impl FnOnce(&Settings) -> Result<(), String>,
-    publish: impl FnOnce(Settings),
-) -> Result<(), String> {
-    apply(&settings)?;
-    persist(&settings).map_err(|error| {
-        format!(
-            "Playback update completed, but its default could not be saved: {}",
-            error
-        )
-    })?;
-    publish(settings);
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::cell::RefCell;
-
-    #[test]
-    fn failed_playback_change_does_not_save_or_publish_defaults() {
-        let result = commit_playback_change(
-            Settings::default(),
-            |_| Err("Monitor unavailable".into()),
-            |_| panic!("Failed playback must not persist settings"),
-            |_| panic!("Failed playback must not publish settings"),
-        );
-        assert_eq!(result, Err("Monitor unavailable".into()));
-    }
-
-    #[test]
-    fn playback_save_failure_reports_partial_completion_without_publishing() {
-        let calls = RefCell::new(Vec::new());
-        let result = commit_playback_change(
-            Settings::default(),
-            |_| {
-                calls.borrow_mut().push("apply");
-                Ok(())
-            },
-            |_| {
-                calls.borrow_mut().push("persist");
-                Err("Disk full".into())
-            },
-            |_| panic!("Failed persistence must not publish settings"),
-        );
-        assert_eq!(*calls.borrow(), vec!["apply", "persist"]);
-        let error = result.unwrap_err();
-        assert!(error.contains("Playback update completed"));
-        assert!(error.contains("Disk full"));
-    }
-
-    #[test]
-    fn playback_defaults_publish_only_after_apply_and_save_succeed() {
-        let calls = RefCell::new(Vec::new());
-        let settings = Settings {
-            default_playback_speed: 1.5,
-            ..Settings::default()
-        };
-        commit_playback_change(
-            settings,
-            |settings| {
-                assert_eq!(settings.default_playback_speed, 1.5);
-                calls.borrow_mut().push("apply");
-                Ok(())
-            },
-            |_| {
-                calls.borrow_mut().push("persist");
-                Ok(())
-            },
-            |settings| {
-                assert_eq!(settings.default_playback_speed, 1.5);
-                calls.borrow_mut().push("publish");
-            },
-        )
-        .unwrap();
-        assert_eq!(*calls.borrow(), vec!["apply", "persist", "publish"]);
-    }
 }

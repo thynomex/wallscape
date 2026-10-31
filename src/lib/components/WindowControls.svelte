@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { settingsStore } from "$lib/stores/settings.svelte";
   import { appVisibility } from "$lib/stores/appVisibility.svelte";
 
@@ -56,6 +57,41 @@
       throw error;
     }
   }
+
+  // A maximized window fills the work area, so variables.css drops the
+  // floating-card margin and corner radius while this attribute is set.
+  onMount(() => {
+    if (!inTauri) return;
+
+    let disposed = false;
+    let unlistenResize: (() => void) | null = null;
+
+    async function syncMaximized() {
+      try {
+        const maximized = await (await appWindow()).isMaximized();
+        if (!disposed) {
+          document.documentElement.toggleAttribute("data-window-maximized", maximized);
+        }
+      } catch (error) {
+        console.warn("Failed to read window maximized state:", error);
+      }
+    }
+
+    void syncMaximized();
+    appWindow()
+      .then((w) => w.onResized(() => void syncMaximized()))
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else unlistenResize = unlisten;
+      })
+      .catch((error) => console.warn("Window resize listener unavailable:", error));
+
+    return () => {
+      disposed = true;
+      unlistenResize?.();
+      document.documentElement.removeAttribute("data-window-maximized");
+    };
+  });
 </script>
 
 <div class="window-controls" aria-label="Window controls">
@@ -219,19 +255,4 @@
     }
   }
 
-  @media (max-width: 720px) {
-    .window-controls {
-      top: 8px;
-      right: 18px;
-    }
-
-    .ctl {
-      width: 22px;
-      height: 32px;
-    }
-
-    .ctl-close {
-      width: 30px;
-    }
-  }
 </style>

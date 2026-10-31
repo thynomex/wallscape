@@ -6,6 +6,7 @@
   import SavedFilterControls from "$lib/components/SavedFilterControls.svelte";
   import SearchBar from "$lib/components/SearchBar.svelte";
   import WallpaperCard from "$lib/components/WallpaperCard.svelte";
+  import type { RenderWindow } from "$lib/types/library";
 
   const INITIAL_RENDER_COUNT = 48;
   const RENDER_INCREMENT = 48;
@@ -18,6 +19,7 @@
     error = null,
     favoriteBusyId = null,
     savedFilters = [],
+    renderWindow = $bindable(null),
     onSearch,
     onSaveFilter,
     onApplyFilter,
@@ -32,26 +34,30 @@
     error?: string | null;
     favoriteBusyId?: number | null;
     savedFilters?: SavedFilter[];
+    /** "Show more" progress; bound by the owner so it outlives this view. */
+    renderWindow?: RenderWindow | null;
     onSearch: () => void;
-    onSaveFilter: (name: string) => void;
+    /** Resolves to true when the filter was saved. */
+    onSaveFilter: (name: string) => boolean | Promise<boolean>;
     onApplyFilter: (filter: SavedFilter) => void;
     onDeleteFilter: (filter: SavedFilter) => void;
     onOpen: (wallpaper: Wallpaper) => void;
     onFavoriteChange: (wallpaper: Wallpaper, isFavorite: boolean) => void;
   } = $props();
 
-  let visibleCount = $state(INITIAL_RENDER_COUNT);
+  // A different result list starts from the first page.
   let renderKey = $derived(wallpapers.map((wallpaper) => wallpaper.id).join("|"));
+  let visibleCount = $derived(
+    renderWindow?.key === renderKey ? renderWindow.count : INITIAL_RENDER_COUNT,
+  );
   let visibleWallpapers = $derived(wallpapers.slice(0, visibleCount));
   let hiddenCount = $derived(Math.max(0, wallpapers.length - visibleWallpapers.length));
 
-  $effect(() => {
-    renderKey;
-    visibleCount = INITIAL_RENDER_COUNT;
-  });
-
   function showMore() {
-    visibleCount = Math.min(wallpapers.length, visibleCount + RENDER_INCREMENT);
+    renderWindow = {
+      key: renderKey,
+      count: Math.min(wallpapers.length, visibleCount + RENDER_INCREMENT),
+    };
   }
 </script>
 
@@ -87,11 +93,12 @@
     <EmptyState message="No matches found." />
   {:else}
     <div class="card-grid">
-      {#each visibleWallpapers as wallpaper (wallpaper.id)}
+      {#each visibleWallpapers as wallpaper, index (wallpaper.id)}
         <WallpaperCard
           {wallpaper}
+          {index}
           active={selected?.id === wallpaper.id}
-          onApply={onOpen}
+          {onOpen}
           onFavoriteChange={onFavoriteChange}
           favoriteBusy={favoriteBusyId === wallpaper.id}
         />

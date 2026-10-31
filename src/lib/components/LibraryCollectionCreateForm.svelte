@@ -22,11 +22,11 @@
     if (!name) return;
 
     const created = await onCreateCollection(name);
-    newCollectionName = "";
+    // Keep the typed name after a failure so it can be fixed and resubmitted.
+    if (!created) return;
 
-    if (created) {
-      onCollectionCreated(created);
-    }
+    newCollectionName = "";
+    onCollectionCreated(created);
   }
 </script>
 
@@ -103,15 +103,4 @@
     cursor: not-allowed;
   }
 
-  @media (max-width: 720px) {
-    .collection-create {
-      align-items: stretch;
-      width: 100%;
-    }
-
-    .collection-create input,
-    .collection-create button {
-      width: 100%;
-    }
-  }
 </style>

@@ -81,7 +81,6 @@ export async function downloadWallhavenIntoState(
     wallpaper.id,
     wallpaper.file_size > 0 ? wallpaper.file_size : null,
   );
-  state.wallhavenError = null;
   state.importStatus = `Downloading Wallhaven ${wallpaper.id}...`;
   state.importWarnings = [];
 
@@ -134,7 +133,8 @@ export async function downloadWallhavenIntoState(
       wallpaper.id,
       error,
     );
-    state.wallhavenError = error;
+    // The card's failed state and the caller's toast report download errors;
+    // wallhavenError stays reserved for search so results remain visible.
     state.importStatus = null;
     console.error(e);
     return { ok: false, error };

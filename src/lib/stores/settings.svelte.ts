@@ -42,7 +42,6 @@ export function normalizeFavoriteRotationInterval(value: number) {
 interface PendingUpdate {
   id: number;
   patch: Partial<Settings>;
-  persist?: (settings: Settings) => Promise<unknown>;
   resolve: (result: StoreActionResult<Settings>) => void;
 }
 
@@ -80,16 +79,11 @@ export class SettingsStore {
   /**
    * Serialize writes and rebase each patch on the last confirmed response.
    * Older replies cannot roll back newer edits, including when a save fails.
-   * A custom persist callback owns both runtime application and persistence;
-   * it runs instead of update_settings, with get_settings confirming its result.
    */
-  update(
-    patch: Partial<Settings>,
-    persist?: (settings: Settings) => Promise<unknown>,
-  ): Promise<StoreActionResult<Settings>> {
+  update(patch: Partial<Settings>): Promise<StoreActionResult<Settings>> {
     const id = ++this.latestUpdate;
     const result = new Promise<StoreActionResult<Settings>>((resolve) => {
-      this.pending.push({ id, patch: { ...patch }, persist, resolve });
+      this.pending.push({ id, patch: { ...patch }, resolve });
     });
     this.rebuildOptimisticSettings();
     this.saving = true;
@@ -113,35 +107,12 @@ export class SettingsStore {
     while (this.pending.length) {
       const update = this.pending[0];
       let result: StoreActionResult<Settings>;
-      let persistedByCallback = false;
       try {
         const next = { ...this.confirmed, ...update.patch };
-        if (update.persist) {
-          // Playback commands apply to the runtime and persist their own defaults.
-          await update.persist({ ...next });
-          persistedByCallback = true;
-          // A successful command committed this valid patch. Retain it even if
-          // the authoritative refresh fails, so the next write cannot undo it.
-          this.confirmed = next;
-          this.confirmed = await invoke<Settings>("get_settings");
-        } else {
-          this.confirmed = await invoke<Settings>("update_settings", { settings: next });
-        }
+        this.confirmed = await invoke<Settings>("update_settings", { settings: next });
         result = { ok: true, value: { ...this.confirmed } };
       } catch (e) {
-        let error = persistedByCallback
-          ? `Settings saved, but failed to reload settings: ${e}`
-          : `Failed to save settings: ${e}`;
-        if (update.persist && !persistedByCallback) {
-          // A rejected IPC reply can be ambiguous. Prefer authoritative defaults;
-          // if they are unavailable, retain the previously confirmed settings.
-          try {
-            this.confirmed = await invoke<Settings>("get_settings");
-          } catch (refreshError) {
-            error += `. Failed to reload settings: ${refreshError}`;
-          }
-        }
-        result = { ok: false, error };
+        result = { ok: false, error: `Failed to save settings: ${e}` };
         console.error(e);
       }
 

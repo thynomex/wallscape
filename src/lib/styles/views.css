@@ -1,12 +1,14 @@
+/* The shell fills the window: a transparent margin around it would still
+   belong to the window, so it would block clicks to the desktop, leave gaps
+   when snapped, and put the resize edge outside the visible card.
+   No backdrop-filter: the transparent window shows nothing behind to blur. */
 .shell {
   position: fixed;
-  inset: var(--shell-inset);
+  inset: 0;
   z-index: 1;
   border-radius: var(--shell-radius);
   overflow: hidden;
   background: rgba(11, 16, 20, 0.5);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid rgba(255, 255, 255, 0.18);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.18),
@@ -243,12 +245,14 @@
   isolation: isolate;
 }
 
+/* Centered at --content-max; its padding is the shared page edge that the
+   nav logo and hero copy also start on (see --page-inset). */
 .content-section {
-  padding: 0 clamp(74px, 5.8vw, 104px) var(--space-12);
+  padding: 0 var(--page-gutter) var(--space-12);
   position: relative;
   z-index: 2;
   margin-top: 0;
-  max-width: 1480px;
+  max-width: var(--content-max);
   margin-left: auto;
   margin-right: auto;
   isolation: isolate;
@@ -283,14 +287,6 @@
   font-size: clamp(14px, 1.02vw, 17px);
   color: var(--text-secondary);
   opacity: 0.8;
-}
-
-.notice {
-  font-size: 13px;
-  color: var(--text-tertiary);
-  margin-top: -23px;
-  margin-bottom: var(--space-6);
-  opacity: 0.45;
 }
 
 .discover-header {
@@ -440,51 +436,6 @@
   align-items: stretch;
 }
 
-.collection-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: clamp(16px, 2vw, 24px);
-}
-
-.collection-tile {
-  position: relative;
-  aspect-ratio: 4 / 3;
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  border: 1px solid var(--glass-border);
-  padding: 0;
-  background: var(--bg-secondary);
-  transition:
-    transform var(--motion-med) var(--ease-emphasized),
-    box-shadow var(--motion-med) var(--ease-standard),
-    filter var(--motion-med) var(--ease-standard);
-  animation: soft-enter var(--motion-slow) var(--ease-emphasized) both;
-}
-
-.collection-tile:hover {
-  transform: translateY(-4px);
-  box-shadow: var(--shadow-card-hover);
-  filter: saturate(1.05);
-}
-
-.collection-tile img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.collection-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: flex-end;
-  padding: var(--space-5);
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.75), transparent 60%);
-  font-size: 18px;
-  font-weight: 600;
-  color: #fff;
-}
-
 .search-bar {
   display: flex;
   align-items: center;
@@ -571,12 +522,7 @@
   background: rgba(255, 255, 255, 0.03);
 }
 
-.loading-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: clamp(20px, 2.2vw, 34px);
-}
-
+/* Layout comes from the grid class LoadingGrid shares with the real cards. */
 .loading-card {
   aspect-ratio: 16 / 9;
   border-radius: 20px;
@@ -593,144 +539,14 @@
     shimmer 1.35s linear infinite;
 }
 
-.monitor-bar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-4) var(--space-12);
-  font-size: 13px;
-  color: var(--text-tertiary);
-  border-top: 1px solid var(--glass-border);
-  flex-wrap: wrap;
-  row-gap: 6px;
-}
-
-.footer-error {
-  color: #ffb4ab;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.footer-status {
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.footer-warning {
-  color: #ffd38a;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.footer-actions {
-  margin-left: auto;
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.restore-btn,
-.history-menu summary {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  height: 32px;
-  padding: 0 var(--space-4);
-  border-radius: var(--radius-full);
-  border: 1px solid var(--glass-border);
-  background: var(--glass-control);
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-  transition:
-    background var(--motion-fast) var(--ease-standard),
-    transform var(--motion-fast) var(--ease-standard),
-    border-color var(--motion-fast) var(--ease-standard);
-}
-
-.history-menu {
-  position: relative;
-}
-
-.history-menu summary {
-  list-style: none;
-  cursor: pointer;
-}
-
-.history-menu summary::-webkit-details-marker {
-  display: none;
-}
-
-.restore-btn:hover,
-.history-menu summary:hover {
-  background: rgba(255, 255, 255, 0.14);
-  transform: translateY(-1px);
-}
-
-.restore-btn:active,
-.history-menu summary:active {
-  transform: translateY(0) scale(0.98);
-}
-
-.history-popover {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
-  z-index: 40;
-  width: min(320px, calc(100vw - 32px));
-  display: grid;
-  gap: 6px;
-  padding: var(--space-3);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--glass-border);
-  background: rgba(14, 18, 24, 0.96);
-  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.34), inset 0 1px 0 var(--glass-highlight);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-}
-
-.history-item {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-  padding: 8px 9px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.history-title {
-  overflow: hidden;
-  color: var(--text-primary);
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.history-meta {
-  overflow: hidden;
-  color: var(--text-tertiary);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
+/* Fade only: the shell fills the window, so movement would be clipped. */
 @keyframes shell-enter {
   from {
     opacity: 0;
-    transform: translate3d(0, 18px, 0) scale(0.985);
     filter: blur(12px);
   }
   to {
     opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
     filter: blur(0);
   }
 }
@@ -817,83 +633,15 @@
   }
 }
 
-@media (max-width: 720px) {
-  .shell {
-    inset: 0;
-    border-radius: 0;
-  }
-
-  .content-section {
-    padding: var(--space-6);
-    max-width: none;
-  }
-
-  .home-section {
-    padding-top: calc(var(--nav-height) + var(--space-6));
-    margin-top: calc(-1 * (var(--nav-height) + var(--space-6)));
-  }
-
-  .carousel-wrap {
-    margin-top: -44px;
-    margin-bottom: 40px;
-  }
-
-  .card-grid,
-  .loading-grid,
-  .collection-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .section-header {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 10px;
-    margin-bottom: 24px;
-  }
-
-  .search-bar {
-    flex-wrap: wrap;
-  }
-
-  .search-bar input {
-    min-width: 0;
-    width: 100%;
-  }
-
-  .search-btn {
-    width: 100%;
-  }
-
-  .filter-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .discover-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .pager {
-    flex-wrap: wrap;
-  }
-
-  .monitor-bar {
-    padding: var(--space-4) var(--space-6);
-  }
-}
-
-@media (min-width: 721px) and (max-width: 1180px) {
-  .card-grid,
-  .loading-grid {
+/* The window's minimum width is 960px (tauri.conf.json), so there are no
+   phone breakpoints. */
+@media (max-width: 1180px) {
+  .card-grid {
     grid-template-columns: repeat(2, minmax(240px, 1fr));
   }
 
   .filter-grid {
     grid-template-columns: repeat(2, minmax(180px, 1fr));
-  }
-
-  .content-section {
-    padding-left: var(--space-8);
-    padding-right: var(--space-8);
   }
 }
 

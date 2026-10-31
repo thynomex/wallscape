@@ -9,6 +9,8 @@
     monitors = [],
     applyTargetMonitorId = null,
     applyingWallpaperPath = null,
+    remoteApplyPath = null,
+    remoteApplyLabel = null,
     favoriteBusyId = null,
     thumbnailBusyId = null,
     canCancelWallpaper,
@@ -37,6 +39,10 @@
     monitors?: Monitor[];
     applyTargetMonitorId?: string | null;
     applyingWallpaperPath?: string | null;
+    /** Remote URL of the Discover preview being downloaded and applied. */
+    remoteApplyPath?: string | null;
+    /** Progress text for that download. */
+    remoteApplyLabel?: string | null;
     favoriteBusyId?: number | null;
     thumbnailBusyId?: number | null;
     canCancelWallpaper: (wallpaper: Wallpaper | null) => boolean;
@@ -59,6 +65,12 @@
     onPrevMotionBgs: () => void;
     onNextMotionBgs: () => void;
   } = $props();
+
+  // Remote previews carry the remote URL, never the downloaded local path, so
+  // they track their download-then-apply run by that URL.
+  function remoteApplying(wallpaper: Wallpaper) {
+    return remoteApplyPath !== null && remoteApplyPath === wallpaper.file_path;
+  }
 </script>
 
 {#if detailWallpaper}
@@ -90,7 +102,8 @@
     onApply={onApplyWallhaven}
     onCancel={onCancel}
     canCancel={canCancelWallpaper(wallhavenDetail)}
-    applying={applyingWallpaperPath === wallhavenDetail.file_path}
+    applying={remoteApplying(wallhavenDetail)}
+    applyLabel={remoteApplying(wallhavenDetail) ? remoteApplyLabel : null}
     {monitors}
     {applyTargetMonitorId}
     {onApplyTargetChange}
@@ -106,7 +119,8 @@
     onApply={onApplyMotionBgs}
     onCancel={onCancel}
     canCancel={canCancelWallpaper(motionBgsDetail)}
-    applying={applyingWallpaperPath === motionBgsDetail.file_path}
+    applying={remoteApplying(motionBgsDetail)}
+    applyLabel={remoteApplying(motionBgsDetail) ? remoteApplyLabel : null}
     {monitors}
     {applyTargetMonitorId}
     {onApplyTargetChange}

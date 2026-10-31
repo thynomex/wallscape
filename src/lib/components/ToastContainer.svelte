@@ -17,11 +17,49 @@
         return "info";
     }
   }
+
+  function toastLabel(type: Toast["type"]) {
+    switch (type) {
+      case "success":
+        return "Success";
+      case "error":
+        return "Error";
+      case "warning":
+        return "Warning";
+      default:
+        return "Notice";
+    }
+  }
+
+  // Keep the countdown paused while either the pointer or keyboard focus is
+  // still on the toast.
+  function resumeUnlessFocused(event: PointerEvent, id: string) {
+    const toast = event.currentTarget as HTMLElement;
+    if (!toast.contains(document.activeElement)) toastStore.resume(id);
+  }
+
+  function resumeUnlessHovered(event: FocusEvent, id: string) {
+    const toast = event.currentTarget as HTMLElement;
+    const next = event.relatedTarget;
+    if (next instanceof Node && toast.contains(next)) return;
+    if (!toast.matches(":hover")) toastStore.resume(id);
+  }
 </script>
 
-<div class="toast-container">
+<!-- One polite live region; each toast is announced as it is added. -->
+<div class="toast-container" aria-live="polite" aria-relevant="additions text">
   {#each toastStore.toasts as toast (toast.id)}
-    <div class="toast toast-{toast.type}" class:dismissing={toast.dismissing}>
+    <div
+      class="toast toast-{toast.type}"
+      class:dismissing={toast.dismissing}
+      class:paused={toast.paused}
+      role="group"
+      aria-label={toastLabel(toast.type)}
+      onpointerenter={() => toastStore.pause(toast.id)}
+      onpointerleave={(event) => resumeUnlessFocused(event, toast.id)}
+      onfocusin={() => toastStore.pause(toast.id)}
+      onfocusout={(event) => resumeUnlessHovered(event, toast.id)}
+    >
       {#if resolveMediaSrc(toast.thumbnail)}
         <div class="toast-thumbnail">
           <img
@@ -38,8 +76,22 @@
       {/if}
       <div class="toast-content">
         <span class="toast-message">{toast.message}</span>
-        <div class="toast-progress" style="animation-duration: {toast.duration}ms;"></div>
+        {#if toast.duration > 0}
+          <div
+            class="toast-progress"
+            style="animation-duration: {toast.duration}ms;"
+            aria-hidden="true"
+          ></div>
+        {/if}
       </div>
+      <button
+        type="button"
+        class="toast-dismiss"
+        aria-label="Dismiss notification"
+        onclick={() => toastStore.dismiss(toast.id)}
+      >
+        <Icon name="x" size={14} />
+      </button>
     </div>
   {/each}
 </div>
@@ -178,6 +230,34 @@
     animation: toast-progress linear forwards;
   }
 
+  /* The store pauses the timer; the bar holds with it. */
+  .toast.paused .toast-progress {
+    animation-play-state: paused;
+  }
+
+  .toast-dismiss {
+    flex-shrink: 0;
+    align-self: flex-start;
+    width: 24px;
+    height: 24px;
+    margin: -4px -6px 0 0;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    color: rgba(255, 255, 255, 0.62);
+    background: transparent;
+    transition:
+      background var(--motion-fast) var(--ease-standard),
+      color var(--motion-fast) var(--ease-standard);
+  }
+
+  .toast-dismiss:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.12);
+  }
+
   @keyframes toast-thumb-in {
     from {
       transform: scale(1.2);
@@ -206,19 +286,6 @@
     }
     to {
       transform: scaleX(0);
-    }
-  }
-
-  @media (max-width: 640px) {
-    .toast-container {
-      bottom: 16px;
-      right: 12px;
-      left: 12px;
-    }
-
-    .toast {
-      min-width: unset;
-      max-width: unset;
     }
   }
 

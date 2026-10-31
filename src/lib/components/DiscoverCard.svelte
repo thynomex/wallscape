@@ -8,7 +8,12 @@
     remoteDownloadKey,
     remoteDownloadPercent,
   } from "$lib/utils/downloadProgress";
-  import { resolveMediaSrc } from "$lib/utils/media";
+  import {
+    formatDimensions,
+    formatFileSizeMb,
+    formatResolution,
+    resolveMediaSrc,
+  } from "$lib/utils/media";
   import {
     motionBgsDownloadOptions,
     motionBgsDownloadSourceId,
@@ -71,7 +76,7 @@
       ? selectedWallpaper.fileSize
       : selectedWallpaper.file_size,
   );
-  const fileSizeMb = $derived(fileSize > 0 ? Math.max(1, Math.round(fileSize / 1024 / 1024)) : null);
+  const fileSizeLabel = $derived(formatFileSizeMb(fileSize));
   const previewCandidates = $derived(
     (isMotionBgsWallpaper(wallpaper)
       ? [wallpaper.thumbnailUrl]
@@ -86,15 +91,23 @@
         ? ""
         : `https://wallhaven.cc/w/${selectedWallpaper.id}`),
   );
+  // Same title the detail view and the downloaded library entry use.
   const cardTitle = $derived(
     isMotionBgsWallpaper(selectedWallpaper)
       ? selectedWallpaper.title
-      : `Wallhaven ${selectedWallpaper.id}`,
+      : `Wallhaven ${selectedWallpaper.category} ${selectedWallpaper.id}`,
   );
   const cardSubtitle = $derived(
-    isMotionBgsWallpaper(selectedWallpaper)
-      ? `${selectedWallpaper.width}x${selectedWallpaper.height} · ${fileSizeMb ? `${fileSizeMb}MB · ` : ""}${selectedWallpaper.quality}`
-      : `${selectedWallpaper.resolution} · ${fileSizeMb ?? 0}MB · ${selectedWallpaper.category}`,
+    (isMotionBgsWallpaper(selectedWallpaper)
+      ? [
+          formatDimensions(selectedWallpaper.width, selectedWallpaper.height),
+          fileSizeLabel,
+          selectedWallpaper.quality,
+        ]
+      : [formatResolution(selectedWallpaper.resolution), fileSizeLabel]
+    )
+      .filter(Boolean)
+      .join(" · "),
   );
   const badgeLabel = $derived(
     isMotionBgsWallpaper(selectedWallpaper)
@@ -231,7 +244,9 @@
       border-color var(--motion-fast) var(--ease-standard),
       box-shadow var(--motion-med) var(--ease-standard),
       background var(--motion-med) var(--ease-standard);
-    animation: card-enter var(--motion-slow) var(--ease-emphasized) both;
+    /* `backwards`, not `both`: a filled animation keeps setting transform
+       after it ends, which overrides the hover lift. */
+    animation: card-enter var(--motion-slow) var(--ease-emphasized) backwards;
     will-change: transform;
   }
 

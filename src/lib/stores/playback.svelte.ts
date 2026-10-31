@@ -8,6 +8,7 @@ const beginRequest = latestRequest();
 export class PlaybackStore {
   status = $state<RuntimeStatus>({
     active: false, paused: false, autoPaused: false, playbackSpeed: null, fitMode: null,
+    players: [],
   });
   busy = $state(false);
 

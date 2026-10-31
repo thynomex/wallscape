@@ -1,34 +1,62 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
+  import type { LibraryFilter } from "$lib/types/library";
   import type { Collection } from "$lib/types/wallpaper";
 
   let {
     collections = [],
-    selectedCollectionId = null,
-    onSelectCollection,
+    activeFilter,
+    wallpaperCount,
+    favoriteCount,
+    onFilterChange,
   }: {
     collections?: Collection[];
-    selectedCollectionId?: number | null;
-    onSelectCollection: (collectionId: number) => void;
+    activeFilter: LibraryFilter;
+    wallpaperCount: number;
+    favoriteCount: number;
+    onFilterChange: (filter: LibraryFilter) => void;
   } = $props();
+
+  function collectionFilter(id: number): LibraryFilter {
+    return `collection:${id}`;
+  }
 </script>
 
-{#if collections.length}
-  <div class="collection-chip-row" aria-label="Collections">
-    {#each collections as collection (collection.id)}
-      <button
-        class="collection-chip"
-        class:active={selectedCollectionId === collection.id}
-        aria-pressed={selectedCollectionId === collection.id}
-        onclick={() => onSelectCollection(collection.id)}
-      >
-        <Icon name="folder" size={15} />
-        {collection.name}
-        <span>{collection.wallpaper_count}</span>
-      </button>
-    {/each}
-  </div>
-{/if}
+<!-- One filter for the grid below: everything, favorites, or a collection. -->
+<div class="collection-chip-row" role="group" aria-label="Show in library">
+  <button
+    class="collection-chip"
+    class:active={activeFilter === "all"}
+    aria-pressed={activeFilter === "all"}
+    onclick={() => onFilterChange("all")}
+  >
+    All
+    <span>{wallpaperCount}</span>
+  </button>
+  <button
+    class="collection-chip"
+    class:active={activeFilter === "favorites"}
+    aria-pressed={activeFilter === "favorites"}
+    onclick={() => onFilterChange("favorites")}
+  >
+    <Icon name="heart" size={15} />
+    Favorites
+    <span>{favoriteCount}</span>
+  </button>
+  {#each collections as collection (collection.id)}
+    {@const filter = collectionFilter(collection.id)}
+    <button
+      class="collection-chip"
+      class:active={activeFilter === filter}
+      aria-pressed={activeFilter === filter}
+      onclick={() => onFilterChange(filter)}
+    >
+      <Icon name="folder" size={15} />
+      {collection.name}
+      <span>{collection.wallpaper_count}</span>
+    </button>
+  {/each}
+</div>
 
 <style>
   .collection-chip-row {
@@ -78,7 +106,7 @@
   .collection-chip.active {
     color: #111820;
     background: rgba(255, 255, 255, 0.92);
-    animation: segment-pop 260ms var(--ease-spring) both;
+    animation: segment-pop 260ms var(--ease-spring) backwards;
   }
 
   .collection-chip.active span {
@@ -91,17 +119,6 @@
     }
     100% {
       transform: scale(1);
-    }
-  }
-
-  @media (max-width: 720px) {
-    .collection-chip-row {
-      align-items: stretch;
-      width: 100%;
-    }
-
-    .collection-chip {
-      width: 100%;
     }
   }
 

@@ -78,7 +78,8 @@
     onSourceChange: (source: DiscoverSource) => void;
     onSearch: (page?: number) => void;
     onSearchMotionBgs: (page?: number) => void;
-    onSaveFilter: (name: string) => void;
+    /** Resolves to true when the filter was saved. */
+    onSaveFilter: (name: string) => boolean | Promise<boolean>;
     onApplyFilter: (filter: SavedFilter) => void;
     onDeleteFilter: (filter: SavedFilter) => void;
     onOpen: (wallpaper: WallhavenWallpaper) => void;
@@ -231,7 +232,7 @@
   {#if currentError}
     <EmptyState message={currentError} />
   {:else if currentLoading}
-    <LoadingGrid />
+    <LoadingGrid layout="discover-grid" />
   {:else if source === "wallhaven" && results.length === 0}
     <EmptyState message="No Wallhaven results found." />
   {:else if source === "motionbgs" && motionBgsResults.length === 0}

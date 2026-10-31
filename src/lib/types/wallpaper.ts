@@ -61,9 +61,6 @@ export interface Wallpaper
   source_id: string | null;
   file_size_bytes?: number;
   created_at?: number;
-  file_size_mb?: number;
-  /** UI-only: optional badge shown on the card. */
-  badge?: "new" | "featured" | "exclusive";
 }
 
 export interface WallpaperDto

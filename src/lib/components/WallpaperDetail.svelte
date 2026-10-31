@@ -5,10 +5,11 @@
     setWallpaperFitMode,
     setWallpaperSpeed,
   } from "$lib/api/wallpaperApi";
-  import { settingsStore } from "$lib/stores/settings.svelte";
   import { PlaybackStore } from "$lib/stores/playback.svelte";
   import { toastStore } from "$lib/stores/toasts.svelte";
+  import type { RuntimeStatus } from "$lib/types/generated";
   import type { Monitor, Wallpaper } from "$lib/types/wallpaper";
+  import { formatDimensions, wallpaperMediaLabel } from "$lib/utils/media";
   import Icon from "./Icon.svelte";
   import WallpaperPreviewMedia from "./WallpaperPreviewMedia.svelte";
 
@@ -28,6 +29,7 @@
     onReveal,
     onRegenerateThumbnail,
     thumbnailBusy = false,
+    applyLabel = null,
     onPrev,
     onNext,
   }: {
@@ -46,41 +48,109 @@
     onReveal?: (w: Wallpaper) => void;
     onRegenerateThumbnail?: (w: Wallpaper) => void;
     thumbnailBusy?: boolean;
+    /** Busy text for the apply button, e.g. download progress. */
+    applyLabel?: string | null;
     onPrev?: () => void;
     onNext?: () => void;
   } = $props();
 
+  let dialogEl = $state<HTMLDivElement | null>(null);
   let favorited = $derived(Boolean(wallpaper.is_favorite));
   let canTargetMonitor = $derived(monitors.length > 1);
   let activeApplyTargetMonitorId = $derived(
     canTargetMonitor ? applyTargetMonitorId : null,
   );
-  let mediaLabel = $derived(
-    wallpaper.media_type === "image"
-      ? "image"
-      : `${wallpaper.fps}fps`,
-  );
+  let dimensions = $derived(formatDimensions(wallpaper.width, wallpaper.height));
+  let mediaLabel = $derived(wallpaperMediaLabel(wallpaper));
   let wallhavenSourceUrl = $derived(
     wallpaper.source === "wallhaven" && wallpaper.source_id
       ? `https://wallhaven.cc/w/${wallpaper.source_id}`
       : null,
   );
 
-  // Playback controls state
+  // Playback controls act on the live desktop players showing this file, so
+  // they only appear while it is playing on at least one display. Speed and
+  // fit changes apply to those displays only and are not saved as defaults.
   const playback = new PlaybackStore();
+  let isLocalVideo = $derived(
+    wallpaper.id > 0 && wallpaper.media_type === "video" && Boolean(wallpaper.file_path),
+  );
+  let livePlayers = $derived(
+    isLocalVideo
+      ? playback.status.players.filter((player) => player.videoPath === wallpaper.file_path)
+      : [],
+  );
+  let showPlaybackControls = $derived(livePlayers.length > 0);
+  // Pause is shared by every live wallpaper, so say so when another file plays.
+  let pauseCoversOthers = $derived(
+    playback.status.players.some((player) => player.videoPath !== wallpaper.file_path),
+  );
   let isPaused = $derived(playback.status.paused);
-  let playbackSpeed = $derived(playback.status.active
-    ? playback.status.playbackSpeed : settingsStore.settings.defaultPlaybackSpeed);
+  let playbackSpeed = $derived(sharedValue(livePlayers.map((player) => player.playbackSpeed)));
+  let fitMode = $derived(sharedValue(livePlayers.map((player) => player.fitMode)));
   let speedMenuOpen = $state(false);
-  let fitMode = $derived(playback.status.active
-    ? playback.status.fitMode : settingsStore.settings.defaultFitMode);
   const speedOptions = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
-  onMount(() => {
+  // The value every matching display has, or null when they differ.
+  function sharedValue<T>(values: T[]): T | null {
+    return values.length > 0 && values.every((value) => value === values[0]) ? values[0] : null;
+  }
+
+  $effect(() => {
+    if (!isLocalVideo) return;
+    // Re-read right away when this preview changes or an apply finishes.
+    wallpaper.file_path;
+    applying;
     void playback.refresh();
     const interval = window.setInterval(() => void playback.refresh(), 2000);
     return () => window.clearInterval(interval);
   });
+
+  $effect(() => {
+    if (!showPlaybackControls) speedMenuOpen = false;
+  });
+
+  onMount(() => {
+    // The page behind is inert while this is open; the page restores focus.
+    dialogEl?.focus({ preventScroll: true });
+  });
+
+  // Keys the focused control already uses: arrows change a <select> (the
+  // display picker), Space presses a button.
+  const ARROW_KEY_CONTROLS = "select, input, textarea, [role='menu']";
+  const SPACE_KEY_CONTROLS = "button, select, input, textarea, a[href], [role='menu']";
+
+  function focusedControlHandles(e: KeyboardEvent, selector: string) {
+    return e.target instanceof Element && e.target.closest(selector) !== null;
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+
+    if (e.key === "Escape") {
+      e.preventDefault();
+      if (speedMenuOpen) {
+        speedMenuOpen = false;
+      } else {
+        onClose?.();
+      }
+      return;
+    }
+
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      if (focusedControlHandles(e, ARROW_KEY_CONTROLS)) return;
+      e.preventDefault();
+      if (e.key === "ArrowLeft") onPrev?.();
+      else onNext?.();
+      return;
+    }
+
+    if (e.key === " " && showPlaybackControls) {
+      if (focusedControlHandles(e, SPACE_KEY_CONTROLS)) return;
+      e.preventDefault();
+      void togglePause();
+    }
+  }
 
   const fitModeIcon = $derived(
     fitMode === "fit" ? "maximize-2" : fitMode === "fill" ? "maximize" : "move",
@@ -124,12 +194,23 @@
     if (!result.ok) toastStore.error(result.error);
   }
 
-  async function setPlaybackSpeed(speed: number) {
-    const result = await settingsStore.update(
-      { defaultPlaybackSpeed: speed },
-      (settings) => playback.update(() => setWallpaperSpeed(settings.defaultPlaybackSpeed)),
-    );
-    if (!result.ok) toastStore.error(result.error);
+  // Applies a live change to each display showing this file, or to all of them
+  // in one call when this file is the only one playing.
+  async function changeLivePlayers(change: (monitorId: string | null) => Promise<RuntimeStatus>) {
+    const targets = pauseCoversOthers ? livePlayers.map((player) => player.monitorId) : [null];
+    try {
+      await playback.update(async () => {
+        let status: RuntimeStatus | null = null;
+        for (const monitorId of targets) status = await change(monitorId);
+        return status ?? playback.status;
+      });
+    } catch (error) {
+      toastStore.error(String(error));
+    }
+  }
+
+  function setPlaybackSpeed(speed: number) {
+    return changeLivePlayers((monitorId) => setWallpaperSpeed(speed, monitorId));
   }
 
   async function choosePlaybackSpeed(speed: number) {
@@ -147,35 +228,25 @@
     const currentIndex = fitMode === null ? -1 : modes.indexOf(fitMode);
     const nextMode = modes[(currentIndex + 1) % modes.length];
 
-    const result = await settingsStore.update(
-      { defaultFitMode: nextMode },
-      (settings) => playback.update(() => setWallpaperFitMode(settings.defaultFitMode)),
-    );
-    if (!result.ok) toastStore.error(result.error);
+    await changeLivePlayers((monitorId) => setWallpaperFitMode(nextMode, monitorId));
   }
 </script>
 
 <svelte:window
-  onkeydown={(e) => {
-    if (speedMenuOpen && e.key === "Escape") {
-      speedMenuOpen = false;
-      e.preventDefault();
-      return;
-    }
-    if (e.key === "Escape") onClose?.();
-    if (e.key === "ArrowLeft") onPrev?.();
-    if (e.key === "ArrowRight") onNext?.();
-    if (e.key === " " && wallpaper.media_type === "video") {
-      e.preventDefault();
-      togglePause();
-    }
-  }}
+  onkeydown={handleKeydown}
   onclick={() => {
     speedMenuOpen = false;
   }}
 />
 
-<div class="detail">
+<div
+  class="detail"
+  role="dialog"
+  aria-modal="true"
+  aria-label={wallpaper.title}
+  tabindex="-1"
+  bind:this={dialogEl}
+>
   <WallpaperPreviewMedia
     {wallpaper}
     mode="detail"
@@ -187,7 +258,7 @@
   <div class="detail-scrim"></div>
 
   <button class="close" aria-label="Close preview" onclick={() => onClose?.()}>
-    <Icon name="chevron-left" size={20} />
+    <Icon name="close" size={20} />
   </button>
 
   <!-- Floating frosted control bar -->
@@ -195,8 +266,10 @@
     <div class="meta">
       <div class="title">{wallpaper.title}</div>
       <div class="sub">
-        <span>{wallpaper.width}×{wallpaper.height}</span>
-        <span>·</span>
+        {#if dimensions}
+          <span>{dimensions}</span>
+          <span>·</span>
+        {/if}
         <span>{mediaLabel}</span>
         {#if wallpaper.tags.length}
           <span>·</span>
@@ -217,12 +290,15 @@
       </button>
     </div>
 
-    {#if wallpaper.media_type === "video"}
-      <div class="playback-group">
+    {#if showPlaybackControls}
+      <div class="playback-group" role="group" aria-label="Desktop playback">
         <button
           class="pause-btn"
           class:playing={!isPaused}
-          aria-label={isPaused ? "Resume playback" : "Pause playback"}
+          aria-label={pauseCoversOthers
+            ? isPaused ? "Resume all live wallpapers" : "Pause all live wallpapers"
+            : isPaused ? "Resume playback" : "Pause playback"}
+          title={pauseCoversOthers ? "Pause applies to every display" : undefined}
           aria-pressed={!isPaused}
           disabled={applying || playback.busy}
           onclick={togglePause}
@@ -293,9 +369,10 @@
         <button
           aria-label="Regenerate thumbnail"
           disabled={thumbnailBusy}
+          aria-busy={thumbnailBusy}
           onclick={() => onRegenerateThumbnail?.(wallpaper)}
         >
-          <Icon name="refresh" size={18} />
+          <Icon name="refresh" size={18} spin={thumbnailBusy} />
         </button>
       {/if}
       {#if onFavoriteChange}
@@ -364,8 +441,8 @@
           if (!applying) onApply?.(wallpaper, activeApplyTargetMonitorId);
         }}
       >
-        <Icon name={applying ? "refresh" : "play"} size={16} />
-        {applying ? "Applying" : "Set Wallpaper"}
+        <Icon name={applying ? "refresh" : "play"} size={16} spin={applying} />
+        {applying ? (applyLabel ?? "Applying") : "Set Wallpaper"}
       </button>
     </div>
   </div>
@@ -377,7 +454,13 @@
     inset: 0;
     z-index: 200;
     overflow: hidden;
-    animation: detail-in var(--motion-med) var(--ease-standard) both;
+    /* `backwards`: the backdrop blur only covers the fade-in. Kept after it,
+       it keeps blurring the page under an opaque image for no visible gain. */
+    animation: detail-in var(--motion-med) var(--ease-standard) backwards;
+  }
+
+  .detail:focus-visible {
+    outline: none;
   }
 
   .detail :global(.detail-bg) {
@@ -386,7 +469,7 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    animation: detail-media-in 900ms var(--ease-emphasized) both;
+    animation: detail-media-in 900ms var(--ease-emphasized) backwards;
   }
 
   .detail :global(.detail-poster) {
@@ -441,7 +524,7 @@
     transition:
       background var(--motion-fast) var(--ease-standard),
       transform var(--motion-fast) var(--ease-standard);
-    animation: soft-enter 420ms var(--ease-emphasized) 120ms both;
+    animation: soft-enter 420ms var(--ease-emphasized) 120ms backwards;
   }
 
   .close:hover {
@@ -461,7 +544,8 @@
     padding: var(--space-3);
     border-radius: var(--radius-lg);
     max-width: calc(100% - 48px);
-    animation: rise 480ms var(--ease-emphasized) both;
+    /* A lingering filter here would stop the speed menu's backdrop blur. */
+    animation: rise 480ms var(--ease-emphasized) backwards;
   }
 
   .meta {
@@ -752,108 +836,6 @@
     to {
       opacity: 1;
       transform: translate(-50%, 0) scale(1);
-      filter: blur(0);
-    }
-  }
-
-  @media (max-width: 720px) {
-    .control-bar {
-      left: var(--space-4);
-      right: var(--space-4);
-      bottom: var(--space-4);
-      max-width: none;
-      transform: none;
-      flex-wrap: wrap;
-      justify-content: space-between;
-      border-radius: 18px;
-      padding: var(--space-3);
-      animation-name: rise-mobile;
-    }
-    .meta {
-      width: 100%;
-      padding: 0 var(--space-2) var(--space-2);
-    }
-    .nav-group,
-    .icon-group,
-    .playback-group {
-      flex: 1;
-      justify-content: center;
-      min-width: 120px;
-    }
-    .playback-group {
-      justify-content: space-evenly;
-    }
-    .speed-control {
-      width: 94px;
-    }
-    .speed-menu {
-      bottom: calc(100% + 10px);
-    }
-    .apply {
-      flex: 1 1 100%;
-      justify-content: center !important;
-      height: 42px !important;
-    }
-    .action-group {
-      flex: 1 1 100%;
-      width: 100%;
-    }
-    .cancel,
-    .apply,
-    .target-select {
-      flex: 1 1 0;
-      justify-content: center !important;
-      min-width: 0;
-    }
-
-    .target-select select {
-      max-width: none;
-      min-width: 0;
-      width: 100%;
-    }
-  }
-
-  @media (max-width: 420px) {
-    .icon-group {
-      order: 4;
-      flex: 1 1 100%;
-    }
-    .nav-group {
-      order: 2;
-    }
-    .playback-group {
-      order: 3;
-      flex: 1 1 100%;
-    }
-    .speed-control {
-      flex: 1;
-    }
-    .speed-button {
-      width: 100% !important;
-    }
-    .apply {
-      order: 5;
-    }
-    .action-group {
-      order: 5;
-    }
-    .target-select {
-      flex: 1 1 100%;
-    }
-    .sub {
-      flex-wrap: wrap;
-    }
-  }
-
-  @keyframes rise-mobile {
-    from {
-      opacity: 0;
-      transform: translateY(18px) scale(0.96);
-      filter: blur(10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0) scale(1);
       filter: blur(0);
     }
   }

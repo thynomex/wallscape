@@ -57,10 +57,11 @@ export function installCaptureBridge(fixtures) {
       case 'get_storage_stats': result = state.storageStats; break;
       case 'get_settings': result = state.settings; break;
       case 'get_runtime_status':
-        result = { active: false, paused: false, autoPaused: false, playbackSpeed: null, fitMode: null };
+        result = { active: false, paused: false, autoPaused: false, playbackSpeed: null, fitMode: null, players: [] };
         break;
       case 'plugin:window|is_visible': result = true; break;
       case 'plugin:window|is_minimized': result = false; break;
+      case 'plugin:window|is_maximized': result = false; break;
       case 'plugin:event|listen':
         listeners.set(args.handler, args.event);
         result = args.handler;

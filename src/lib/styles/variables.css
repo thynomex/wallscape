@@ -19,7 +19,8 @@
   --glass-blur: blur(34px) saturate(165%);
   --text-primary: #ffffff;
   --text-secondary: #a0aec0;
-  --text-tertiary: #6b7280;
+  /* ≥4.5:1 against the darkest glass panels (~#0e1318). */
+  --text-tertiary: #7a8494;
 
   --accent-blue: #3b82f6;
   --accent-blue-hover: #2563eb;
@@ -29,7 +30,6 @@
   --glass-medium: rgba(255, 255, 255, 0.15);
   --glass-dark: rgba(0, 0, 0, 0.5);
 
-  --badge-new: #3b82f6;
   --border-active: #ffffff;
   --border-subtle: rgba(255, 255, 255, 0.1);
 
@@ -70,7 +70,18 @@
   --motion-slow: 620ms;
 
   /* ── Layout ───────────────────────────────── */
-  --shell-inset: clamp(38px, 3.2vw, 56px);
   --shell-radius: clamp(26px, 3vw, 38px);
   --nav-height: 132px;
+
+  /* Shared page edge for the nav logo, hero copy and section content.
+     `--page-inset` adds the centering offset once content hits its max
+     width; use it only in elements spanning the full shell width. */
+  --page-gutter: clamp(56px, 5.8vw, 104px);
+  --content-max: 1480px;
+  --page-inset: max(var(--page-gutter), calc((100% - var(--content-max)) / 2 + var(--page-gutter)));
+}
+
+/* A maximized window fills the work area edge to edge. */
+:root[data-window-maximized] {
+  --shell-radius: 0px;
 }

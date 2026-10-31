@@ -11,7 +11,8 @@ export function motionBgsToWallpaper(wallpaper: MotionBgsWallpaper | null): Wall
     tags: ["motionbgs", wallpaper.quality, ...wallpaper.tags],
     width: wallpaper.width,
     height: wallpaper.height,
-    fps: 60,
+    // Unknown until the file is downloaded and probed.
+    fps: 0,
     duration_ms: 0,
     file_size_bytes: wallpaper.fileSize,
     media_type: "video",

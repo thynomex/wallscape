@@ -49,6 +49,9 @@ a {
   color: inherit;
 }
 
+/* Pre-reveal state only. The reveal action removes these classes once the
+   transition ends, because a lingering filter/will-change: filter stops
+   descendants' backdrop-filter from seeing content behind this element. */
 .motion-reveal {
   opacity: 0;
   transform: translate3d(0, var(--reveal-distance, 18px), 0) scale(0.985);
@@ -63,8 +66,8 @@ a {
 
 .motion-reveal.is-visible {
   opacity: 1;
-  transform: translate3d(0, 0, 0) scale(1);
-  filter: blur(0);
+  transform: none;
+  filter: none;
 }
 
 @keyframes soft-enter {
@@ -126,14 +129,6 @@ a:focus-visible {
   outline-offset: 4px;
 }
 
-/* Glassmorphism helper */
-.glass {
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
 /* Frosted near-black surface used across panels, bars and pills.
    The inset top highlight + dark hairline create the bevel that reads
    as glass against the blurred ambient backdrop. */
@@ -146,9 +141,6 @@ a:focus-visible {
 }
 
 @supports not (backdrop-filter: blur(20px)) {
-  .glass {
-    background: rgba(42, 53, 64, 0.95);
-  }
   .glass-surface {
     background: var(--glass-panel-strong);
   }

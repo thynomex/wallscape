@@ -37,11 +37,13 @@
     name,
     size = 20,
     strokeWidth = 2,
-  }: { name: IconName; size?: number; strokeWidth?: number } = $props();
+    spin = false,
+  }: { name: IconName; size?: number; strokeWidth?: number; spin?: boolean } = $props();
 </script>
 
 <svg
   class="icon"
+  class:spin
   width={size}
   height={size}
   viewBox="0 0 24 24"
@@ -154,5 +156,21 @@
   .icon {
     display: block;
     flex-shrink: 0;
+  }
+
+  .icon.spin {
+    animation: icon-spin 900ms linear infinite;
+  }
+
+  @keyframes icon-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .icon.spin {
+      animation: none !important;
+    }
   }
 </style>

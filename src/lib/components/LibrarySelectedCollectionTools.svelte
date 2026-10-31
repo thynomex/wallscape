@@ -10,13 +10,14 @@
   }: {
     selectedCollection: Collection;
     collectionBusyId?: number | null;
-    onDeleteCollection: (collection: Collection) => void | Promise<void>;
+    /** Resolves to true only when the collection was deleted. */
+    onDeleteCollection: (collection: Collection) => boolean | Promise<boolean>;
     onDeleted: () => void;
   } = $props();
 
   async function deleteSelectedCollection() {
-    await onDeleteCollection(selectedCollection);
-    onDeleted();
+    // Cancelling the confirmation or a failed delete keeps the collection open.
+    if (await onDeleteCollection(selectedCollection)) onDeleted();
   }
 </script>
 
@@ -117,19 +118,4 @@
     font-size: 11px;
   }
 
-  @media (max-width: 720px) {
-    .collection-tools {
-      align-items: stretch;
-      width: 100%;
-    }
-
-    .collection-tool,
-    .collection-selected-meta {
-      width: 100%;
-    }
-
-    .collection-selected-meta span {
-      max-width: none;
-    }
-  }
 </style>

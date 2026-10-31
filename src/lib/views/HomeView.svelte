@@ -15,7 +15,6 @@
     featured,
     selected,
     loading,
-    onApply,
     onOpen,
     onSelectFeatured,
     onFavoriteChange,
@@ -29,7 +28,6 @@
     featured: Wallpaper | null;
     selected: Wallpaper | null;
     loading: boolean;
-    onApply: (wallpaper: Wallpaper) => void;
     onOpen: (wallpaper: Wallpaper) => void;
     onSelectFeatured: (wallpaper: Wallpaper) => void;
     onFavoriteChange: (wallpaper: Wallpaper, isFavorite: boolean) => void;
@@ -126,7 +124,7 @@
     <div class="hero-wrap" use:reveal={{ distance: "28px", delay: 40 }}>
       <HeroSection
         wallpaper={featured}
-        onApply={onApply}
+        {onOpen}
         onFavoriteChange={onFavoriteChange}
         favoriteBusy={featured ? favoriteBusyId === featured.id : false}
       />
@@ -156,18 +154,18 @@
         <p class="home-start-label">Library Empty</p>
         <h1>Choose your first wallpaper</h1>
         <p>
-          Browse Wallhaven for still wallpapers, MotionBGs for live wallpapers, or
+          Browse Wallhaven for still wallpapers, MotionBGS for live wallpapers, or
           import files already on this PC.
         </p>
       </div>
-      <div class="home-start-actions" aria-label="Add wallpapers">
+      <div class="home-start-actions" role="group" aria-label="Add wallpapers">
         <button type="button" class="start-action primary" onclick={onBrowseWallhaven}>
           <span>Wallhaven</span>
-          <Icon name="external" size={16} />
+          <Icon name="chevron-right" size={16} />
         </button>
         <button type="button" class="start-action" onclick={onBrowseMotionBgs}>
-          <span>MotionBGs</span>
-          <Icon name="external" size={16} />
+          <span>MotionBGS</span>
+          <Icon name="chevron-right" size={16} />
         </button>
         <button type="button" class="start-action" onclick={onImportFiles}>
           <span>Import files</span>
@@ -190,11 +188,12 @@
         <LoadingGrid />
       {:else}
         <div class="card-grid">
-          {#each pickWallpapers as wallpaper (wallpaper.id)}
+          {#each pickWallpapers as wallpaper, index (wallpaper.id)}
             <WallpaperCard
               {wallpaper}
+              {index}
               active={selected?.id === wallpaper.id}
-              onApply={onOpen}
+              {onOpen}
               onFavoriteChange={onFavoriteChange}
               favoriteBusy={favoriteBusyId === wallpaper.id}
             />
@@ -211,7 +210,7 @@
     display: flex;
     flex-direction: column;
     justify-content: flex-end;
-    padding: 0 clamp(74px, 5.8vw, 104px) 150px;
+    padding: 0 var(--page-gutter) 150px var(--page-inset);
   }
 
   .home-start-copy {
@@ -294,24 +293,5 @@
 
   .start-action:active {
     transform: translateY(0) scale(0.98);
-  }
-
-  @media (max-width: 720px) {
-    .home-start {
-      min-height: 560px;
-      padding: 0 var(--space-6) 96px;
-    }
-
-    .home-start h1 {
-      font-size: 42px;
-    }
-
-    .home-start-actions {
-      align-items: stretch;
-    }
-
-    .start-action {
-      flex: 1 1 150px;
-    }
   }
 </style>

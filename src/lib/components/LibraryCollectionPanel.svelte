@@ -3,33 +3,35 @@
   import LibraryCollectionCreateForm from "$lib/components/LibraryCollectionCreateForm.svelte";
   import LibraryCollectionPicker from "$lib/components/LibraryCollectionPicker.svelte";
   import LibrarySelectedCollectionTools from "$lib/components/LibrarySelectedCollectionTools.svelte";
+  import type { LibraryFilter } from "$lib/types/library";
   import type { Collection, Wallpaper } from "$lib/types/wallpaper";
 
   let {
     wallpapers,
     collections = [],
+    activeFilter,
+    favoriteCount,
     selectedCollection = null,
-    selectedCollectionId = null,
     selectedCollectionWallpaperIds,
     collectionBusyId = null,
-    onSelectCollection,
-    onSelectAll,
+    onFilterChange,
     onCreateCollection,
     onDeleteCollection,
     onCollectionMembershipChange,
   }: {
     wallpapers: Wallpaper[];
     collections?: Collection[];
+    activeFilter: LibraryFilter;
+    favoriteCount: number;
     selectedCollection?: Collection | null;
-    selectedCollectionId?: number | null;
     selectedCollectionWallpaperIds: Set<number>;
     collectionBusyId?: number | null;
-    onSelectCollection: (collectionId: number) => void;
-    onSelectAll: () => void;
+    onFilterChange: (filter: LibraryFilter) => void;
     onCreateCollection: (
       name: string,
     ) => Collection | null | void | Promise<Collection | null | void>;
-    onDeleteCollection: (collection: Collection) => void | Promise<void>;
+    /** Resolves to true only when the collection was deleted. */
+    onDeleteCollection: (collection: Collection) => boolean | Promise<boolean>;
     onCollectionMembershipChange: (
       collection: Collection,
       wallpaper: Wallpaper,
@@ -48,14 +50,16 @@
     <LibraryCollectionCreateForm
       disabled={collectionBusyId !== null}
       {onCreateCollection}
-      onCollectionCreated={(collection) => onSelectCollection(collection.id)}
+      onCollectionCreated={(collection) => onFilterChange(`collection:${collection.id}`)}
     />
   </div>
 
   <LibraryCollectionChips
     {collections}
-    {selectedCollectionId}
-    {onSelectCollection}
+    {activeFilter}
+    wallpaperCount={wallpapers.length}
+    {favoriteCount}
+    {onFilterChange}
   />
 
   {#if selectedCollection}
@@ -63,7 +67,7 @@
       {selectedCollection}
       {collectionBusyId}
       {onDeleteCollection}
-      onDeleted={onSelectAll}
+      onDeleted={() => onFilterChange("all")}
     />
 
     <LibraryCollectionPicker
@@ -107,12 +111,5 @@
     margin: 0;
     color: var(--text-secondary);
     font-size: 13px;
-  }
-
-  @media (max-width: 720px) {
-    .collection-panel-head {
-      align-items: stretch;
-      width: 100%;
-    }
   }
 </style>

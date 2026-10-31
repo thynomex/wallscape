@@ -83,6 +83,7 @@ mod tests {
         push_decl::<crate::commands::wallhaven::WallhavenSearchArgs>(&mut output, &config);
         push_decl::<crate::commands::wallhaven::DownloadWallhavenResult>(&mut output, &config);
         push_decl::<crate::downloads::DownloadProgressEvent>(&mut output, &config);
+        push_decl::<crate::commands::runtime::RuntimePlayerStatus>(&mut output, &config);
         push_decl::<crate::commands::runtime::RuntimeStatus>(&mut output, &config);
         push_decl::<crate::storage::StorageStats>(&mut output, &config);
         push_decl::<crate::storage::StorageCleanupResult>(&mut output, &config);

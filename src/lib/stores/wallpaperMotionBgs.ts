@@ -83,7 +83,6 @@ export async function downloadMotionBgsIntoState(
     downloadSourceId,
     wallpaper.fileSize > 0 ? wallpaper.fileSize : null,
   );
-  state.motionBgsError = null;
   state.importStatus = `Downloading MotionBGS ${wallpaper.title}...`;
   state.importWarnings = [];
 
@@ -136,7 +135,8 @@ export async function downloadMotionBgsIntoState(
       downloadSourceId,
       error,
     );
-    state.motionBgsError = error;
+    // The card's failed state and the caller's toast report download errors;
+    // motionBgsError stays reserved for search so results remain visible.
     state.importStatus = null;
     console.error(e);
     return { ok: false, error };

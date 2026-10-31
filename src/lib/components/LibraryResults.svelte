@@ -3,6 +3,7 @@
   import Icon from "$lib/components/Icon.svelte";
   import LoadingGrid from "$lib/components/LoadingGrid.svelte";
   import WallpaperCard from "$lib/components/WallpaperCard.svelte";
+  import type { RenderWindow } from "$lib/types/library";
   import type { Collection, Wallpaper } from "$lib/types/wallpaper";
 
   const INITIAL_RENDER_COUNT = 48;
@@ -17,6 +18,7 @@
     showAllOnEmpty = false,
     selectedCollection = null,
     collectionBusyId = null,
+    renderWindow = $bindable(null),
     onShowAll,
     onBrowse,
     onOpen,
@@ -31,6 +33,8 @@
     showAllOnEmpty?: boolean;
     selectedCollection?: Collection | null;
     collectionBusyId?: number | null;
+    /** "Show more" progress; bound by the owner so it outlives this view. */
+    renderWindow?: RenderWindow | null;
     onShowAll: () => void;
     onBrowse: () => void;
     onOpen: (wallpaper: Wallpaper) => void;
@@ -38,18 +42,19 @@
     onRemoveFromCollection: (wallpaper: Wallpaper) => void | Promise<void>;
   } = $props();
 
-  let visibleCount = $state(INITIAL_RENDER_COUNT);
+  // A different list (filter, import, removal) starts from the first page.
   let renderKey = $derived(wallpapers.map((wallpaper) => wallpaper.id).join("|"));
+  let visibleCount = $derived(
+    renderWindow?.key === renderKey ? renderWindow.count : INITIAL_RENDER_COUNT,
+  );
   let visibleWallpapers = $derived(wallpapers.slice(0, visibleCount));
   let hiddenCount = $derived(Math.max(0, wallpapers.length - visibleWallpapers.length));
 
-  $effect(() => {
-    renderKey;
-    visibleCount = INITIAL_RENDER_COUNT;
-  });
-
   function showMore() {
-    visibleCount = Math.min(wallpapers.length, visibleCount + RENDER_INCREMENT);
+    renderWindow = {
+      key: renderKey,
+      count: Math.min(wallpapers.length, visibleCount + RENDER_INCREMENT),
+    };
   }
 </script>
 
@@ -63,12 +68,13 @@
     </button>
   {:else}
     <div class="card-grid">
-      {#each visibleWallpapers as wallpaper (wallpaper.id)}
+      {#each visibleWallpapers as wallpaper, index (wallpaper.id)}
         <div class="collection-card-wrap">
           <WallpaperCard
             {wallpaper}
+            {index}
             active={selected?.id === wallpaper.id}
-            onApply={onOpen}
+            {onOpen}
             onFavoriteChange={onFavoriteChange}
             favoriteBusy={favoriteBusyId === wallpaper.id}
           />

@@ -141,6 +141,16 @@ export type DownloadWallhavenResult = { wallpaper: Wallpaper, sourceId: string, 
 
 export type DownloadProgressEvent = { source: string, sourceId: string, downloadKey: string, status: string, attempt: number, receivedBytes: number, totalBytes: number | null, progress: number | null, message: string | null, };
 
+export type RuntimePlayerStatus = {
+/**
+ * Monitor id the player runs on; pass it as `monitorId` to target it.
+ */
+monitorId: string,
+/**
+ * File the display is playing, as passed to `set_wallpaper`.
+ */
+videoPath: string, playbackSpeed: number, fitMode: string, };
+
 export type RuntimeStatus = {
 /**
  * A video wallpaper is currently running.
@@ -161,7 +171,11 @@ playbackSpeed: number | null,
 /**
  * Current fit mode, or null when inactive or different across displays.
  */
-fitMode: string | null, };
+fitMode: string | null,
+/**
+ * Each display's video wallpaper.
+ */
+players: Array<RuntimePlayerStatus>, };
 
 export type StorageStats = { total_cache_bytes: number, wallhaven_cache_bytes: number, wallhaven_cache_files: number, unused_wallhaven_cache_bytes: number, unused_wallhaven_cache_files: number, wallhaven_library_entries: number, thumbnail_cache_bytes: number, thumbnail_cache_files: number, unused_thumbnail_bytes: number, unused_thumbnail_files: number, missing_library_entries: number, };
 

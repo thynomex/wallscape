@@ -43,8 +43,9 @@ pub enum FitMode {
 }
 
 /// Per-slot playback state
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct SlotPlaybackState {
+    video_path: String,
     speed: f64,
     fit_mode: FitMode,
 }
@@ -52,10 +53,21 @@ struct SlotPlaybackState {
 impl Default for SlotPlaybackState {
     fn default() -> Self {
         Self {
+            video_path: String::new(),
             speed: 1.0,
             fit_mode: FitMode::Fit,
         }
     }
+}
+
+/// What one display's player is showing, for status reporting.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlayerStatus {
+    /// Monitor id, or the all-displays slot.
+    pub slot: String,
+    pub video_path: String,
+    pub speed: f64,
+    pub fit_mode: FitMode,
 }
 
 /// Main wallpaper engine that manages desktop integration
@@ -239,11 +251,12 @@ impl WallpaperEngine {
 
         // Store the player state
         let state = SlotPlaybackState {
+            video_path: video_path.to_string(),
             speed: options.speed,
             fit_mode: options.fit_mode,
         };
         for slot in slots {
-            self.playback_state.insert(slot, state);
+            self.playback_state.insert(slot, state.clone());
         }
 
         tracing::info!(
@@ -429,6 +442,23 @@ impl WallpaperEngine {
 
     pub fn has_active_players(&self) -> bool {
         !self.video_players.is_empty()
+    }
+
+    /// Every active player, ordered by slot so status output is stable.
+    pub fn player_statuses(&self) -> Vec<PlayerStatus> {
+        let mut players: Vec<PlayerStatus> = self
+            .playback_state
+            .iter()
+            .filter(|(slot, _)| self.video_players.contains_key(*slot))
+            .map(|(slot, state)| PlayerStatus {
+                slot: slot.clone(),
+                video_path: state.video_path.clone(),
+                speed: state.speed,
+                fit_mode: state.fit_mode,
+            })
+            .collect();
+        players.sort_by(|a, b| a.slot.cmp(&b.slot));
+        players
     }
 
     /// None means no active player or differing values across displays.
@@ -697,6 +727,7 @@ mod tests {
             SlotPlaybackState {
                 speed: 1.5,
                 fit_mode: FitMode::Fill,
+                ..SlotPlaybackState::default()
             },
         );
         assert_eq!(engine.playback_values(), (Some(1.5), Some(FitMode::Fill)));
@@ -705,11 +736,56 @@ mod tests {
             SlotPlaybackState {
                 speed: 2.0,
                 fit_mode: FitMode::Fill,
+                ..SlotPlaybackState::default()
             },
         );
         assert_eq!(engine.playback_values(), (None, Some(FitMode::Fill)));
         engine.playback_state.get_mut("B").unwrap().fit_mode = FitMode::Fit;
         assert_eq!(engine.playback_values(), (None, None));
+    }
+
+    #[test]
+    fn player_statuses_report_each_display_file_in_slot_order() {
+        let mut engine = WallpaperEngine::new().unwrap();
+        // Players without an mpv instance are enough for status bookkeeping.
+        let path = std::env::current_exe().unwrap();
+        for (slot, file, speed) in [("B", "city.mp4", 2.0), ("A", "forest.mp4", 1.0)] {
+            engine
+                .video_players
+                .insert(slot.into(), VideoPlayer::new(&path).unwrap());
+            engine.playback_state.insert(
+                slot.into(),
+                SlotPlaybackState {
+                    video_path: file.into(),
+                    speed,
+                    fit_mode: FitMode::Fill,
+                },
+            );
+        }
+        // State left behind for a slot without a player is not reported.
+        engine
+            .playback_state
+            .insert("C".into(), SlotPlaybackState::default());
+
+        let statuses = engine.player_statuses();
+        assert_eq!(
+            statuses,
+            vec![
+                PlayerStatus {
+                    slot: "A".into(),
+                    video_path: "forest.mp4".into(),
+                    speed: 1.0,
+                    fit_mode: FitMode::Fill,
+                },
+                PlayerStatus {
+                    slot: "B".into(),
+                    video_path: "city.mp4".into(),
+                    speed: 2.0,
+                    fit_mode: FitMode::Fill,
+                },
+            ]
+        );
+        engine.stop().unwrap();
     }
 
     #[test]

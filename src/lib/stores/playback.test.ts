@@ -8,7 +8,7 @@ import type { RuntimeStatus } from "$lib/types/generated";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const invokeMock = vi.mocked(invoke);
-const playbackValues = { playbackSpeed: 1, fitMode: "fit" };
+const playbackValues = { playbackSpeed: 1, fitMode: "fit", players: [] };
 beforeEach(() => invokeMock.mockReset());
 
 it("keeps the control paused when automatic rules reject a manual resume", async () => {

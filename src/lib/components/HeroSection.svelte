@@ -1,27 +1,24 @@
 <script lang="ts">
   import type { Wallpaper } from "$lib/types/wallpaper";
+  import { formatDimensions, formatFileSizeMb, wallpaperMediaLabel } from "$lib/utils/media";
   import Icon from "./Icon.svelte";
 
   let {
     wallpaper,
     favoriteBusy = false,
-    onApply,
+    onOpen,
     onFavoriteChange,
   }: {
     wallpaper: Wallpaper | null;
     favoriteBusy?: boolean;
-    onApply?: (w: Wallpaper) => void;
+    onOpen?: (w: Wallpaper) => void;
     onFavoriteChange?: (w: Wallpaper, isFavorite: boolean) => void;
   } = $props();
 
   let favorited = $derived(Boolean(wallpaper?.is_favorite));
-  let mediaLabel = $derived(
-    wallpaper?.media_type === "image"
-      ? "image"
-      : wallpaper?.file_size_mb
-          ? `${wallpaper.file_size_mb}MB`
-          : `${Math.round((wallpaper?.duration_ms ?? 0) / 1000)}s`,
-  );
+  let dimensions = $derived(formatDimensions(wallpaper?.width, wallpaper?.height));
+  let mediaLabel = $derived(wallpaperMediaLabel(wallpaper));
+  let fileSize = $derived(formatFileSizeMb(wallpaper?.file_size_bytes));
 
   function toggleFavorite() {
     if (!wallpaper || favoriteBusy) return;
@@ -38,15 +35,24 @@
           {#if wallpaper.tags.length}
             <span class="cat">{wallpaper.tags[0]}</span>
           {/if}
-          <span>{wallpaper.width}×{wallpaper.height}</span>
+          {#if dimensions}
+            <span>{dimensions}</span>
+          {/if}
           <span>{mediaLabel}</span>
+          {#if fileSize}
+            <span>{fileSize}</span>
+          {/if}
         </div>
       {/if}
 
       <div class="hero-actions">
-        <button class="btn-primary" onclick={() => wallpaper && onApply?.(wallpaper)}>
+        <button
+          class="btn-primary"
+          disabled={!wallpaper}
+          onclick={() => wallpaper && onOpen?.(wallpaper)}
+        >
           View Wallpaper
-          <Icon name="external" size={16} />
+          <Icon name="chevron-right" size={16} />
         </button>
         <button
           class="btn-icon"
@@ -79,8 +85,10 @@
     display: flex;
     flex-direction: column;
     justify-content: flex-end;
-    padding: 0 clamp(74px, 5.8vw, 104px) 166px;
-    max-width: 720px;
+    /* Start on the shared page edge so the copy lines up with the nav logo
+       and the section headings below. */
+    padding: 0 0 166px var(--page-inset);
+    max-width: calc(var(--page-inset) + 616px);
   }
 
   .hero-label {
@@ -91,7 +99,7 @@
     color: rgba(248, 251, 253, 0.92);
     margin-bottom: 16px;
     text-shadow: 0 2px 18px rgba(0, 0, 0, 0.55);
-    animation: hero-copy-in 680ms var(--ease-emphasized) 120ms both;
+    animation: hero-copy-in 680ms var(--ease-emphasized) 120ms backwards;
   }
 
   .hero-metadata {
@@ -103,7 +111,7 @@
     margin-bottom: 30px;
     flex-wrap: wrap;
     text-shadow: 0 2px 18px rgba(0, 0, 0, 0.62);
-    animation: hero-copy-in 760ms var(--ease-emphasized) 260ms both;
+    animation: hero-copy-in 760ms var(--ease-emphasized) 260ms backwards;
   }
 
   .hero-metadata .cat {
@@ -116,7 +124,10 @@
     display: flex;
     align-items: center;
     gap: 28px;
-    animation: hero-copy-in 760ms var(--ease-emphasized) 330ms both;
+    /* `backwards` holds the start frame during the delay, then lets go. With
+       `both` the final filter stays, and an element with a filter stops the
+       heart button's backdrop-filter from blurring the hero behind it. */
+    animation: hero-copy-in 760ms var(--ease-emphasized) 330ms backwards;
   }
 
   .btn-primary {
@@ -192,49 +203,6 @@
       opacity: 1;
       transform: translate3d(0, 0, 0);
       filter: blur(0);
-    }
-  }
-
-  @media (max-width: 720px) {
-    .hero-section {
-      height: min(72dvh, 560px);
-      min-height: 500px;
-    }
-    .hero-content {
-      padding: 0 var(--space-6) 118px;
-      max-width: none;
-    }
-    .hero-metadata {
-      font-size: 14px;
-      gap: 12px;
-    }
-    .hero-actions {
-      gap: 14px;
-    }
-    .btn-primary {
-      height: 46px;
-      padding: 0 20px;
-    }
-    .btn-icon {
-      width: 46px;
-      height: 46px;
-    }
-  }
-
-  @media (max-width: 430px) {
-    .hero-section {
-      min-height: 470px;
-    }
-    .hero-content {
-      padding-bottom: 104px;
-    }
-    .hero-actions {
-      align-items: stretch;
-    }
-    .btn-primary {
-      flex: 1;
-      min-width: 0;
-      justify-content: center;
     }
   }
 

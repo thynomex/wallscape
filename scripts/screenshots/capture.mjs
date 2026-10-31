@@ -197,7 +197,7 @@ try {
   await capture(page, 'library');
 
   await page.setViewportSize({ width: 1600, height: 1000 });
-  await page.getByRole('button', { name: `Set ${fixtures.data.wallpapers[0].title} as wallpaper`, exact: true }).click();
+  await page.getByRole('button', { name: `Open ${fixtures.data.wallpapers[0].title}`, exact: true }).click();
   await page.getByLabel('Wallpaper target display').selectOption('capture-primary');
   await page.getByRole('button', { name: 'Set Wallpaper', exact: true }).waitFor({ state: 'visible' });
   await page.mouse.move(1, 1);
